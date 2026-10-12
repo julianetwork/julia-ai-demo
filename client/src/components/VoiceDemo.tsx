@@ -2,7 +2,8 @@ import type { useVoiceCall } from "../hooks/useVoiceCall.ts";
 import { VoiceOrb, orbLabel } from "./VoiceOrb.tsx";
 import { CallControls } from "./CallControls.tsx";
 import { LiveTranscript } from "./LiveTranscript.tsx";
-import { CaptureStatus } from "./CaptureStatus.tsx";
+import { SchedulingStatus } from "./SchedulingStatus.tsx";
+import type { DemoAppointment, SchedulerActivity } from "../../../shared/api.ts";
 import { AlertIcon, InfoIcon } from "./Icons.tsx";
 
 type Call = ReturnType<typeof useVoiceCall>;
@@ -11,10 +12,11 @@ const STEPS = [
   { title: "Say hello", text: "Ask Julia what she can do for a barbershop." },
   { title: "Play the customer", text: "“Hi, I'd like to book a haircut.”" },
   { title: "Answer her questions", text: "Give a name, a day and a time — one at a time." },
-  { title: "Confirm", text: "When Julia repeats it back, say yes. Watch the dashboard." },
+  { title: "Confirm", text: "Julia checks the calendar, repeats it back, then books it. Watch the dashboard." },
+  { title: "Try a clash", text: "Start a new call and ask for the same time — Julia offers a free slot instead." },
 ];
 
-export function VoiceDemo({ call }: { call: Call }) {
+export function VoiceDemo({ call, activity, appointments }: { call: Call; activity: SchedulerActivity[]; appointments: DemoAppointment[] }) {
   const { phase, orbState, muted, error, endNote } = call;
   const live = phase === "live";
 
@@ -25,8 +27,9 @@ export function VoiceDemo({ call }: { call: Call }) {
           <p className="eyebrow">Live demo</p>
           <h2 id="demo-title" className="section__title">Talk to Julia — right now</h2>
           <p className="section__lead">
-            This is a real voice conversation with Julia. Play a customer calling your shop and book a haircut; the
-            appointment shows up in the dashboard below as soon as she confirms it.
+            This is a real voice conversation with Julia. Play a customer calling your shop and book a haircut. Julia
+            checks a live calendar before confirming, so double bookings are impossible — and the appointment shows up
+            in the dashboard below the moment it's booked.
           </p>
         </div>
 
@@ -82,7 +85,13 @@ export function VoiceDemo({ call }: { call: Call }) {
           </div>
 
           <div className="voice-demo__side">
-            <CaptureStatus outcome={call.outcome} />
+            <SchedulingStatus
+              phase={phase}
+              callId={call.callId}
+              mismatch={call.mismatch}
+              activity={activity}
+              appointments={appointments}
+            />
             <LiveTranscript phase={phase} lines={call.transcript} state={call.transcriptState} />
             <section className="panel script" aria-labelledby="script-title">
               <h3 id="script-title" className="panel__title">Try this script</h3>

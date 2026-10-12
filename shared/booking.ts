@@ -625,57 +625,27 @@ export function extractBooking(
   return { status: "confirmed", booking: partial as ExtractedBooking, evidence };
 }
 
-// ─────────────────── Retell post-call analysis (structured) ───────────────────
+// ───────────────────── parsing for tool arguments ─────────────────────
 
 /**
- * Optional structured signal: if the Retell agent is configured with
- * post-call analysis fields (see README), use them. Returns null when the
- * fields are absent so the caller can fall back to the transcript.
+ * Resolves a date as given to a scheduling tool: "2026-10-16", "tomorrow",
+ * "Friday", "October 16th", "vendredi"… Returns null when not understood.
  */
-export function fromPostCallAnalysis(
-  data: unknown,
-  options: ExtractOptions = {},
-): ExtractionResult | null {
-  if (!data || typeof data !== "object") return null;
-  const d = data as Record<string, unknown>;
-  const flag = d.booking_confirmed;
-  if (typeof flag !== "boolean") return null;
-  if (!flag) return { status: "not_confirmed", reason: "no_confirmation" };
-
-  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : undefined);
-  const name = str(d.customer_name);
-  const dateText = str(d.appointment_date);
-  const timeText = str(d.appointment_time);
-  const service = str(d.service) ?? "Haircut";
-
-  const today = ymdInZone(options.referenceDate ?? new Date(), options.timeZone);
-  let dateISO: string | null = null;
-  if (dateText) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(dateText)) dateISO = dateText;
-    else {
-      const mention = pickDate(dateText);
-      const r = mention?.resolve(today);
-      dateISO = r ? formatISO(r) : null;
-    }
+export function parseDateText(text: string, options: ExtractOptions = {}): { dateISO: string; label: string } | null {
+  const trimmed = text.trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (iso) {
+    const ymd = { y: Number(iso[1]), m: Number(iso[2]), d: Number(iso[3]) };
+    return isValidYMD(ymd) ? { dateISO: formatISO(ymd), label: trimmed } : null;
   }
-  const tm = timeText ? pickTime(timeText) : null;
-  const t = tm ? formatTime(tm.hour24, tm.minute) : null;
+  const mention = pickDate(trimmed);
+  if (!mention) return null;
+  const resolved = mention.resolve(ymdInZone(options.referenceDate ?? new Date(), options.timeZone));
+  return resolved ? { dateISO: formatISO(resolved), label: mention.label.trim() } : null;
+}
 
-  const partial: Partial<ExtractedBooking> = { service };
-  if (name) partial.customerName = cleanName(name) ?? name;
-  if (dateText) {
-    partial.dateLabel = dateText;
-    partial.dateISO = dateISO;
-  }
-  if (t) {
-    partial.time = t.display;
-    partial.time24 = t.h24;
-  }
-  const missing: MissingField[] = [];
-  if (!name) missing.push("name");
-  if (!dateText) missing.push("date");
-  if (!t) missing.push("time");
-  const evidence = "Retell post-call analysis: booking_confirmed = true";
-  if (missing.length) return { status: "incomplete", missing, partial, evidence };
-  return { status: "confirmed", booking: partial as ExtractedBooking, evidence };
+/** Parses a start time such as "8:00 PM", "20:00", "15 h 30", "noon". */
+export function parseTimeText(text: string): { hour24: number; minute: number } | null {
+  const t = pickTime(text.trim());
+  return t ? { hour24: t.hour24, minute: t.minute } : null;
 }

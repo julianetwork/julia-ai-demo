@@ -1,18 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WebCallSession } from "retell-client-js-sdk";
-import type { ExtractedBooking, ExtractionResult } from "../../../shared/booking.ts";
-import type { BookingVerification, LiveEvent, TranscriptEntry } from "../../../shared/api.ts";
+import type { LiveEvent, TranscriptEntry } from "../../../shared/api.ts";
 import { loadRetellClient, SERVER_CONFIGURED_AGENT } from "../lib/retellClient.ts";
-import type { CallError, CallPhase, CaptureMethod, CaptureOutcome, OrbState, TranscriptState } from "../lib/types.ts";
+import type { CallError, CallPhase, OrbState, TranscriptState } from "../lib/types.ts";
 
-export interface VoiceCallCallbacks {
-  onBookingCaptured: (callId: string, booking: ExtractedBooking, method: CaptureMethod, verified: boolean, evidence: string) => void;
-  onBookingNeedsReview: (callId: string) => void;
-  onBookingCancelled: (callId: string) => void;
+export interface VoiceCallOptions {
+  /** Resolves the demo session the call's bookings belong to. */
+  getSessionId: () => Promise<string | null>;
 }
 
-const VERIFY_INTERVAL_MS = 3000;
-const VERIFY_MAX_ATTEMPTS = 30; // ~90 s
 const SPEAKING_THRESHOLD = 0.018;
 const SPEAKING_HOLD_MS = 350;
 
@@ -54,6 +50,7 @@ function connectionError(err: unknown): CallError {
   const status = (err as { status?: number })?.status;
   const message = err instanceof Error ? err.message : "";
   if (status === 429) return { kind: "server", title: "Too many calls", message };
+  if (status === 409) return { kind: "server", title: "Demo session expired", message: message || "Please refresh the page and try again." };
   if (status && status >= 500) {
     return {
       kind: "server",
@@ -72,7 +69,7 @@ function connectionError(err: unknown): CallError {
   };
 }
 
-export function useVoiceCall(callbacks: VoiceCallCallbacks) {
+export function useVoiceCall({ getSessionId }: VoiceCallOptions) {
   const [phase, setPhase] = useState<CallPhase>("idle");
   const [muted, setMutedState] = useState(false);
   const mutedRef = useRef(false);
@@ -85,19 +82,19 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
   const [endNote, setEndNote] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptEntry[]>([]);
   const [transcriptState, setTranscriptState] = useState<TranscriptState>("idle");
-  const [outcome, setOutcome] = useState<CaptureOutcome>({ kind: "none" });
+  /** Id of the current/last call, used to match scheduler activity to it. */
+  const [callId, setCallId] = useState<string | null>(null);
+  /** Set when Julia announced a booking the scheduler never accepted. */
+  const [mismatch, setMismatch] = useState<string | null>(null);
 
-  const cb = useRef(callbacks);
-  cb.current = callbacks;
+  const getSession = useRef(getSessionId);
+  getSession.current = getSessionId;
 
   const sessionRef = useRef<WebCallSession | null>(null);
   const eventsRef = useRef<EventSource | null>(null);
-  const verifyTimer = useRef<number | undefined>(undefined);
   const generation = useRef(0);
-  const callIdRef = useRef<string | null>(null);
   const wentLive = useRef(false);
   const userEnded = useRef(false);
-  const liveBooking = useRef(false);
   const endReason = useRef<string | null>(null);
   const finalized = useRef(false);
   const starting = useRef(false);
@@ -131,175 +128,78 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
     eventsRef.current = null;
   };
 
-  const stopVerification = () => {
-    window.clearTimeout(verifyTimer.current);
-    verifyTimer.current = undefined;
-  };
-
-  const applyLiveBooking = useCallback((callId: string, result: ExtractionResult) => {
-    if (result.status === "confirmed") {
-      liveBooking.current = true;
-      cb.current.onBookingCaptured(callId, result.booking, "live_transcript", false, result.evidence);
-      setOutcome({ kind: "captured", booking: result.booking, verified: false });
-    } else if (result.status === "incomplete") {
-      if (!liveBooking.current) setOutcome({ kind: "incomplete", missing: result.missing, final: false });
-    } else if (result.reason === "cancelled") {
-      liveBooking.current = false;
-      cb.current.onBookingCancelled(callId);
-      setOutcome({ kind: "not_confirmed", reason: "cancelled" });
-    }
-  }, []);
-
-  const openLiveStream = useCallback(
-    (callId: string, gen: number) => {
-      closeEvents();
-      setTranscriptState("connecting");
-      const es = new EventSource(`/api/calls/${encodeURIComponent(callId)}/stream`);
-      eventsRef.current = es;
-      const guard = <T,>(fn: (data: T) => void) => (ev: MessageEvent) => {
-        if (generation.current !== gen) return;
-        try {
-          fn(JSON.parse(ev.data) as T);
-        } catch {
-          /* ignore malformed frames */
-        }
-      };
-      es.addEventListener("monitor", guard<Extract<LiveEvent, { type: "monitor" }>>((d) => setTranscriptState(d.state)));
-      es.addEventListener(
-        "transcript",
-        guard<Extract<LiveEvent, { type: "transcript" }>>((d) => {
-          setTranscriptState("connected");
-          setTranscript(d.lines);
-        }),
-      );
-      es.addEventListener("booking", guard<Extract<LiveEvent, { type: "booking" }>>((d) => applyLiveBooking(callId, d.result)));
-      es.addEventListener("ended", guard<Extract<LiveEvent, { type: "ended" }>>((d) => (endReason.current = d.disconnectionReason)));
-      es.onerror = () => {
-        if (generation.current !== gen) return;
-        if (es.readyState === EventSource.CLOSED) setTranscriptState((s) => (s === "connected" ? s : "unavailable"));
-      };
-    },
-    [applyLiveBooking],
-  );
-
-  /** After the call: confirm (or correct) the booking against Retell's stored call record. */
-  const verify = useCallback((callId: string, gen: number, attempt = 1) => {
-    if (generation.current !== gen) return;
-    const retry = () => {
-      if (attempt >= VERIFY_MAX_ATTEMPTS) {
-        closeEvents();
-        setOutcome({ kind: "unverifiable", reason: "Retell is still processing the call record.", hadLiveBooking: liveBooking.current });
-        return;
+  /** Live transcript of the call, relayed by the server. */
+  const openLiveStream = useCallback((id: string, gen: number) => {
+    closeEvents();
+    setTranscriptState("connecting");
+    const es = new EventSource(`/api/calls/${encodeURIComponent(id)}/stream`);
+    eventsRef.current = es;
+    const guard = <T,>(fn: (data: T) => void) => (ev: MessageEvent) => {
+      if (generation.current !== gen) return;
+      try {
+        fn(JSON.parse(ev.data) as T);
+      } catch {
+        /* ignore malformed frames */
       }
-      verifyTimer.current = window.setTimeout(() => verify(callId, gen, attempt + 1), VERIFY_INTERVAL_MS);
     };
-
-    fetch(`/api/calls/${encodeURIComponent(callId)}/booking`)
-      .then(async (res) => {
-        if (generation.current !== gen) return;
-        if (!res.ok) {
-          if (res.status >= 500 && attempt < 4) return retry();
-          closeEvents();
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          setOutcome({
-            kind: "unverifiable",
-            reason: body.error ?? "The call record couldn't be retrieved.",
-            hadLiveBooking: liveBooking.current,
-          });
-          return;
-        }
-        const v = (await res.json()) as BookingVerification;
-        if (generation.current !== gen) return;
-        if (v.state === "pending") return retry();
-        closeEvents();
-
-        if (v.state === "unavailable") {
-          const reason =
-            v.reason === "no_transcript"
-              ? "Retell didn't store a transcript for this call (check the agent's data storage setting)."
-              : v.reason === "call_not_connected"
-                ? "The call never connected."
-                : "Retell couldn't find the call record.";
-          setOutcome({ kind: "unverifiable", reason, hadLiveBooking: liveBooking.current });
-          return;
-        }
-        if (v.disconnectionReason && !endReason.current) endReason.current = v.disconnectionReason;
-        const r = v.result;
-        if (r.status === "confirmed") {
-          const method: CaptureMethod = v.method === "post_call_analysis" ? "post_call_analysis" : "post_call_transcript";
-          cb.current.onBookingCaptured(callId, r.booking, method, true, r.evidence);
-          liveBooking.current = true;
-          setOutcome({ kind: "captured", booking: r.booking, verified: true });
-        } else if (r.status === "incomplete") {
-          if (liveBooking.current) cb.current.onBookingNeedsReview(callId);
-          setOutcome({ kind: "incomplete", missing: r.missing, final: true });
-        } else {
-          if (r.reason === "cancelled") cb.current.onBookingCancelled(callId);
-          else if (liveBooking.current) cb.current.onBookingNeedsReview(callId);
-          setOutcome({ kind: "not_confirmed", reason: r.reason });
-        }
-      })
-      .catch(() => {
-        if (generation.current === gen) retry();
-      });
+    es.addEventListener("monitor", guard<Extract<LiveEvent, { type: "monitor" }>>((d) => setTranscriptState(d.state)));
+    es.addEventListener(
+      "transcript",
+      guard<Extract<LiveEvent, { type: "transcript" }>>((d) => {
+        setTranscriptState("connected");
+        setTranscript(d.lines);
+      }),
+    );
+    es.addEventListener("mismatch", guard<Extract<LiveEvent, { type: "mismatch" }>>((d) => setMismatch(d.evidence)));
+    es.addEventListener("ended", guard<Extract<LiveEvent, { type: "ended" }>>((d) => (endReason.current = d.disconnectionReason)));
+    es.onerror = () => {
+      if (generation.current !== gen) return;
+      if (es.readyState === EventSource.CLOSED) setTranscriptState((s) => (s === "connected" ? s : "unavailable"));
+    };
   }, []);
 
   /** Single place where a call is wrapped up, whatever ended it. */
-  const finalize = useCallback(
-    (gen: number) => {
-      if (generation.current !== gen || finalized.current) return;
-      finalized.current = true;
-      sessionRef.current = null;
-      setMuted(false);
-      setSpeakingIfChanged(false);
-      orbRef.current?.style.setProperty("--level", "0");
+  const finalize = useCallback((gen: number) => {
+    if (generation.current !== gen || finalized.current) return;
+    finalized.current = true;
+    sessionRef.current = null;
+    setMuted(false);
+    setSpeakingIfChanged(false);
+    orbRef.current?.style.setProperty("--level", "0");
 
-      if (!wentLive.current) {
-        closeEvents();
-        setPhase("error");
-        setError((e) => e ?? connectionError(new Error("not connected")));
-        return;
-      }
-      setPhase("ended");
-      if (!userEnded.current) {
+    if (!wentLive.current) {
+      closeEvents();
+      setPhase("error");
+      setError((e) => e ?? connectionError(new Error("not connected")));
+      return;
+    }
+    setPhase("ended");
+    // Keep the transcript stream briefly for late frames (end reason, final words).
+    window.setTimeout(() => {
+      if (generation.current === gen) closeEvents();
+    }, 4000);
+    if (!userEnded.current) {
+      window.setTimeout(() => {
+        if (generation.current !== gen) return;
         const reason = endReason.current;
         setEndNote((reason && END_REASONS[reason]) || "The call ended unexpectedly. You can start a new conversation anytime.");
-      }
-      const callId = callIdRef.current;
-      if (callId) {
-        setOutcome({ kind: "verifying", hadLiveBooking: liveBooking.current });
-        verify(callId, gen);
-      }
-    },
-    [verify],
-  );
-
-  const start = useCallback(async () => {
-    if (sessionRef.current || starting.current) return;
-    starting.current = true;
-    try {
-      await startCall();
-    } finally {
-      starting.current = false;
+      }, 600);
     }
-    // startCall only uses refs and stable callbacks.
   }, []);
 
   const startCall = async () => {
     const gen = ++generation.current;
-    stopVerification();
     closeEvents();
-    callIdRef.current = null;
     wentLive.current = false;
     userEnded.current = false;
-    liveBooking.current = false;
     endReason.current = null;
     finalized.current = false;
+    setCallId(null);
+    setMismatch(null);
     setError(null);
     setEndNote(null);
     setTranscript([]);
     setTranscriptState("idle");
-    setOutcome({ kind: "none" });
     setMuted(false);
 
     if (!window.isSecureContext) {
@@ -336,8 +236,9 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
 
     setPhase("connecting");
     let client;
+    let demoSessionId: string | null;
     try {
-      client = await loadRetellClient();
+      [client, demoSessionId] = await Promise.all([loadRetellClient(), getSession.current()]);
     } catch {
       if (generation.current !== gen) return;
       setPhase("error");
@@ -345,8 +246,16 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
       return;
     }
     if (generation.current !== gen) return;
+    if (!demoSessionId) {
+      setPhase("error");
+      setError({ kind: "server", title: "Can't reach the demo server", message: "The scheduling service isn't responding. Please refresh the page." });
+      return;
+    }
+
     const session = client.createWebCall({
       agent_id: SERVER_CONFIGURED_AGENT,
+      // Ties the call to this page's demo calendar; the server validates it.
+      metadata: { demo_session_id: demoSessionId },
       audio: { emitRawAudioSamples: true },
       hooks: {
         onStatus: (status) => {
@@ -354,10 +263,9 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
           if (status === "live") {
             wentLive.current = true;
             setPhase("live");
-            const callId = session.callId ?? null;
-            callIdRef.current = callId;
-            setOutcome({ kind: "listening" });
-            if (callId) openLiveStream(callId, gen);
+            const id = session.callId ?? null;
+            setCallId(id);
+            if (id) openLiveStream(id, gen);
           } else if (status === "ended") {
             finalize(gen);
           }
@@ -378,6 +286,17 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
       /* surfaced through onError / onStatus */
     });
   };
+
+  const start = useCallback(async () => {
+    if (sessionRef.current || starting.current) return;
+    starting.current = true;
+    try {
+      await startCall();
+    } finally {
+      starting.current = false;
+    }
+    // startCall only uses refs and stable callbacks.
+  }, []);
 
   const end = useCallback(() => {
     const session = sessionRef.current;
@@ -404,10 +323,7 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
     const session = sessionRef.current;
     sessionRef.current = null;
     if (session) void session.end();
-    stopVerification();
     closeEvents();
-    callIdRef.current = null;
-    liveBooking.current = false;
     setPhase("idle");
     setMuted(false);
     setSpeakingIfChanged(false);
@@ -415,7 +331,8 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
     setEndNote(null);
     setTranscript([]);
     setTranscriptState("idle");
-    setOutcome({ kind: "none" });
+    setCallId(null);
+    setMismatch(null);
     orbRef.current?.style.setProperty("--level", "0");
   }, []);
 
@@ -428,7 +345,6 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
       generation.current++;
       sessionRef.current?.disconnect();
       sessionRef.current = null;
-      stopVerification();
       closeEvents();
     };
   }, []);
@@ -436,17 +352,15 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
   const orbState: OrbState =
     phase === "idle"
       ? "idle"
-      : phase === "requesting_mic" || phase === "connecting"
+      : phase === "requesting_mic" || phase === "connecting" || phase === "ending"
         ? "connecting"
         : phase === "live"
           ? speaking
             ? "speaking"
             : "listening"
-          : phase === "ending"
-            ? "connecting"
-            : phase === "error"
-              ? "error"
-              : "ended";
+          : phase === "error"
+            ? "error"
+            : "ended";
 
   return {
     phase,
@@ -456,7 +370,8 @@ export function useVoiceCall(callbacks: VoiceCallCallbacks) {
     endNote,
     transcript,
     transcriptState,
-    outcome,
+    callId,
+    mismatch,
     orbRef,
     start,
     end,

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { extractBooking, fromPostCallAnalysis, type TranscriptLine } from "../shared/booking.ts";
+import { extractBooking, type TranscriptLine } from "../shared/booking.ts";
 
 // Monday, 12 October 2026, mid-afternoon in Toronto.
 const opts = { referenceDate: new Date("2026-10-12T18:00:00Z"), timeZone: "America/Toronto" };
@@ -159,18 +159,16 @@ test("empty transcripts are handled", () => {
   assert.deepEqual(extractBooking([], opts), { status: "not_confirmed", reason: "empty" });
 });
 
-test("structured post-call analysis is used when configured", () => {
-  const r = fromPostCallAnalysis(
-    { booking_confirmed: true, customer_name: "lee", appointment_date: "tomorrow", appointment_time: "11 AM" },
-    opts,
-  );
-  assert.equal(r?.status, "confirmed");
-  if (r?.status === "confirmed") {
-    assert.equal(r.booking.customerName, "Lee");
-    assert.equal(r.booking.dateISO, "2026-10-13");
-    assert.equal(r.booking.time, "11:00 AM");
-  }
-  assert.equal(fromPostCallAnalysis({ booking_confirmed: false }, opts)?.status, "not_confirmed");
-  assert.equal(fromPostCallAnalysis({ summary: "x" }, opts), null);
-  assert.equal(fromPostCallAnalysis(undefined, opts), null);
+test("tool arguments: dates and times parse consistently", async () => {
+  const { parseDateText, parseTimeText } = await import("../shared/booking.ts");
+  assert.deepEqual(parseDateText("2026-10-16", opts), { dateISO: "2026-10-16", label: "2026-10-16" });
+  assert.equal(parseDateText("tomorrow", opts)?.dateISO, "2026-10-13");
+  assert.equal(parseDateText("vendredi", opts)?.dateISO, "2026-10-16");
+  assert.equal(parseDateText("2026-02-30", opts), null);
+  assert.equal(parseDateText("whenever", opts), null);
+  assert.deepEqual(parseTimeText("8:00 PM"), { hour24: 20, minute: 0 });
+  assert.deepEqual(parseTimeText("20:30"), { hour24: 20, minute: 30 });
+  assert.deepEqual(parseTimeText("15 h"), { hour24: 15, minute: 0 });
+  assert.deepEqual(parseTimeText("noon"), { hour24: 12, minute: 0 });
+  assert.equal(parseTimeText("soon"), null);
 });

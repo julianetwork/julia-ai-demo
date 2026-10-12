@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { DEFAULT_HOURS, parseBusinessHours } from "../shared/scheduling.ts";
 
 /** Server-side configuration. Values here never reach the browser. */
 const num = (value: string | undefined, fallback: number) => {
@@ -31,6 +32,9 @@ export const config = {
     max: num(process.env.CALL_RATE_LIMIT_MAX, 6),
     windowMs: num(process.env.CALL_RATE_LIMIT_WINDOW_MINUTES, 10) * 60_000,
   },
+  /** Optional shared secret Retell sends in the X-Julia-Tool-Secret header of function calls. */
+  toolSecret: (process.env.RETELL_TOOL_SECRET ?? "").trim(),
+  businessHours: parseBusinessHours(process.env.BUSINESS_HOURS) ?? DEFAULT_HOURS,
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   timeZone: process.env.DEMO_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
 };
@@ -43,4 +47,8 @@ try {
 } catch {
   console.warn(`[config] DEMO_TIMEZONE "${config.timeZone}" is not a valid IANA zone; using UTC.`);
   config.timeZone = "UTC";
+}
+
+if (process.env.BUSINESS_HOURS && !parseBusinessHours(process.env.BUSINESS_HOURS)) {
+  console.warn(`[config] BUSINESS_HOURS "${process.env.BUSINESS_HOURS}" is invalid (use HH:MM-HH:MM); using 09:00-22:00.`);
 }

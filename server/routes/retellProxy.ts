@@ -3,6 +3,7 @@ import { rateLimit } from "express-rate-limit";
 import { config, isRetellConfigured } from "../config.ts";
 import { retell, describeRetellError } from "../retell.ts";
 import { registerCall, isKnownCall, CALL_ID_PATTERN } from "../callRegistry.ts";
+import { getSession } from "../demoSessions.ts";
 import { log, shortId } from "../logger.ts";
 
 /**
@@ -34,17 +35,25 @@ retellProxy.post("/v3/create-web-call", createCallLimiter, async (req, res) => {
       error_message: "The demo server is not configured yet: RETELL_API_KEY is missing.",
     });
   }
-  // The browser may send fields, but nothing it sends is trusted or forwarded.
-  if (req.body !== undefined && (typeof req.body !== "object" || Array.isArray(req.body))) {
+  // Only one browser field is used: the demo session the call belongs to.
+  // Everything else (agent, overrides, variables) is decided server-side.
+  const body = req.body as { metadata?: { demo_session_id?: unknown } } | undefined;
+  if (body !== undefined && (typeof body !== "object" || body === null || Array.isArray(body))) {
     return res.status(400).json({ error_message: "Invalid request body." });
+  }
+  const sessionId = typeof body?.metadata?.demo_session_id === "string" ? body.metadata.demo_session_id : "";
+  const session = getSession(sessionId);
+  if (!session) {
+    return res.status(409).json({ error_message: "This demo session has expired. Please refresh the page and try again." });
   }
 
   try {
     const call = await retell().call.createWebCall({
       agent_id: config.retellAgentId,
-      metadata: { source: "julia-ai-demo" },
+      metadata: { source: "julia-ai-demo", demo_session_id: session.id },
     });
-    registerCall(call.call_id);
+    registerCall(call.call_id, session.id);
+    session.touch();
     log.info("calls", `web call created ${shortId(call.call_id)}`);
     // access_token is a single-call, short-lived join token — not the API key.
     res.json(call);

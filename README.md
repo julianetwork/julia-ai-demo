@@ -1,8 +1,8 @@
 # Julia AI — Interactive Voice Receptionist Demo
 
-A client-facing demo of **Julia**, an AI receptionist for barbershops. A visitor talks to Julia in a real-time voice call in the browser, through Retell AI. They play a customer booking a haircut, and the confirmed booking appears automatically in an appointments dashboard below the call.
+A client-facing demo of **Julia**, an AI receptionist for barbershops. A visitor talks to Julia in a real-time voice call in the browser, through Retell AI. They play a customer booking a haircut. Julia checks a live calendar through the app's scheduler before confirming anything. Every appointment is a 60-minute slot, and overlapping bookings are refused with an alternative offered. The booking appears in an appointments dashboard below the call.
 
-> **Demo only.** Bookings are simulated and kept in the page's memory. Nothing is saved, sent, or added to a real calendar. A page refresh or **Reset Demo** clears everything.
+> **Demo only.** Bookings are simulated and kept in server memory for the current page session only. Nothing is saved to disk, sent, or added to a real calendar. A page refresh or **Reset Demo** clears everything.
 
 ---
 
@@ -42,7 +42,7 @@ npm start          # serves the app and the API on http://localhost:8787
 | `npm run dev:server` / `npm run dev:client` | Starts each one on its own |
 | `npm run build` | TypeScript check, then production build of the frontend |
 | `npm start` | Serves the built app and the API from one Express server |
-| `npm test` | Unit tests: booking extraction (EN/FR) and appointment de-duplication |
+| `npm test` | Unit + HTTP tests: scheduling rules, the Retell tool endpoints (signed requests), date/time parsing (EN/FR) |
 | `npm run typecheck` | TypeScript only |
 | `npm run check:secrets` | Scans `client/dist` to prove no Retell secret is in the bundle (also checks against the real key in `.env`) |
 
@@ -51,8 +51,9 @@ npm start          # serves the app and the API on http://localhost:8787
 1. In Render choose **New → Web Service** and connect this GitHub repository and branch.
 2. Settings:
    * **Language:** Node · **Build command:** `npm ci && npm run build` · **Start command:** `npm start`
-   * **Environment variables:** `RETELL_API_KEY` (your secret key), `TRUST_PROXY=true`, `DEMO_TIMEZONE=America/Toronto`
+   * **Environment variables:** `RETELL_API_KEY` (your secret key), `TRUST_PROXY=true`, `DEMO_TIMEZONE=America/Toronto`, `RETELL_TOOL_SECRET` (a long random string), optionally `BUSINESS_HOURS`
 3. Deploy. Your link is `https://<service-name>.onrender.com`. Render provides HTTPS, which the microphone requires.
+4. Set up Julia's two scheduling functions in Retell using that URL (see [Retell configuration](#retell-configuration)).
 
 On the free tier the service sleeps when idle, so the first visit can take about 30 seconds. Open the link before a meeting.
 
@@ -69,6 +70,8 @@ On the free tier the service sleeps when idle, so the first visit can take about
 | `CALL_RATE_LIMIT_WINDOW_MINUTES` | no | `10` | Rate-limit window |
 | `DEMO_TIMEZONE` | no | server's zone | IANA zone (e.g. `America/Toronto`) used to resolve "tomorrow", "Friday"… |
 | `TRUST_PROXY` | no | `loopback` | Set to `true` when hosted behind a proxy (Render, Railway, Fly.io) so rate limiting sees real visitor IPs |
+| `BUSINESS_HOURS` | no | `09:00-22:00` | Opening hours in the shop's time zone. Slots are 60 minutes, so the last start is one hour before closing |
+| `RETELL_TOOL_SECRET` | recommended | – | Shared secret that Retell sends in an `X-Julia-Tool-Secret` header on the scheduling functions. Signed Retell requests are accepted either way |
 
 If `RETELL_API_KEY` is missing, the server still starts and logs a warning. The page then shows a friendly "not configured" message instead of crashing.
 
@@ -77,85 +80,136 @@ If `RETELL_API_KEY` is missing, the server still starts and logs a warning. The 
 ## How it works
 
 ```
-Browser (React)                         Express server                      Retell
-───────────────                         ──────────────                      ──────
-retell-client-js-sdk ──POST /api/retell/v3/create-web-call──▶ adds secret key ──▶ /v3/create-web-call
-   (placeholder key,                    (forces RETELL_AGENT_ID,                 returns access_token
-    proxied fetch)     ◀── call_id + short-lived access_token ──┘
-   │
-   └── WebRTC audio ◀──────────────────────────────────────────────────────────▶ Julia (voice)
+Browser (React)                       Express server                                  Retell
+───────────────                       ──────────────                                  ──────
+POST /api/demo-sessions ───────────▶  new in-memory demo calendar (per page)
+EventSource /api/demo-sessions/:id/events ◀── live appointments + scheduler activity
 
-EventSource ◀── GET /api/calls/:id/stream (SSE) ── monitorCall() transcript ◀── /v2/monitor-call (WS)
-   live transcript + live booking detection         + booking extractor
+retell-client-js-sdk ── create-web-call (+ demo_session_id) ──▶ adds secret key ──▶ /v3/create-web-call
+   └── WebRTC audio ◀───────────────────────────────────────────────────────────▶ Julia (voice)
 
-fetch ──▶ GET /api/calls/:id/booking ── call.retrieve() ──────────────────────▶ /v2/get-call
-   post-call verification                (post-call analysis, or final transcript)
+                                      POST /api/tools/check-availability  ◀── Julia's functions
+                                      POST /api/tools/book-appointment    ◀── (signed by Retell)
+                                         └─ shared/scheduling.ts decides
+
+EventSource /api/calls/:id/stream ◀── monitorCall() transcript ◀────────────────── /v2/monitor-call
 ```
+
+### Scheduling: one-hour slots, no overlaps (enforced in code)
+
+All rules live in `shared/scheduling.ts`, a pure, unit-tested module:
+
+* Every appointment occupies exactly **60 minutes**, `[start, start + 60 min)`. An 8:00 PM booking blocks 8:00 PM up to, but not including, 9:00 PM.
+* A request is refused if it overlaps **any** confirmed appointment on the same date in this demo session. Back-to-back is allowed: 9:00 PM may follow 8:00 PM.
+* A request must fall within `BUSINESS_HOURS` and not be in the past. Both are judged in `DEMO_TIMEZONE`, the shop's time zone.
+* When a slot is unavailable, `checkAvailability()` returns up to three non-overlapping alternatives, nearest first (later wins a tie). If 8:00 PM is taken, 9:00 PM is offered first. A full day rolls over to the following days.
+* The dashboard uses the same module for slot ranges ("8:00 PM – 9:00 PM"), "Today" and "Next open slot".
+
+**Julia cannot book on her own.** She has two Retell custom functions that call the server while the call is in progress:
+
+| Function | What the server does |
+| --- | --- |
+| `check_availability(date, time)` | Parses the date/time ("tomorrow", "Friday", "2026-10-16", "8 PM", "20:00", "15 h"). Validates the slot and returns `available: true`, or `available: false` with a reason and alternatives. It never books anything. |
+| `book_appointment(customer_name, date, time, service?)` | Re-validates the slot and, only if it is free, records the appointment. It returns `booked: true` or `booked: false` plus alternatives. This is the **only** way an appointment can be created. |
+
+* **Atomic:** the check and the insert happen in one synchronous step, so two requests cannot both take the same slot.
+* **Duplicates:** the same confirmation processed twice (a retry or a repeated function call) returns the existing booking (`already_booked: true`) and never creates a second row.
+* **Changing the time:** if the same caller books again under the same name, the appointment is **moved**, not duplicated. The old slot is freed.
+* **Wording:** each response carries a plain-language `message` addressed to Julia ("NOT AVAILABLE: … Offer these times … Do not tell the caller anything is booked"). The prompt section below tells her to follow it.
+* **Authentication:** requests must carry a valid `X-Retell-Signature` (verified against the raw body with your API key, using the official `retell-sdk` `verify`) or the `X-Julia-Tool-Secret` header.
+* **Routing:** each web call is created with this page's `demo_session_id`, so a function call lands in the right visitor's calendar. Calls started elsewhere, such as Retell's own "Test" button, get a private scratch calendar and never touch a demo page.
+
+**Safety net:** the server also watches the live transcript. If Julia ever *says* a booking is confirmed but the scheduler holds no booking for that call, the page shows a warning ("Julia said it was booked — the scheduler disagrees") and adds nothing.
 
 ### Voice call (official SDK, secret key never in the browser)
 
-* The browser uses the official **`retell-client-js-sdk` v3** `RetellClient.createWebCall()`. It follows the **proxy pattern documented in the SDK README**: the client gets a placeholder key and a custom `fetch` that sends the SDK's request to `/api/retell/...` on our server, where the real key is attached.
-* The proxy exposes only `POST /v3/create-web-call` (rate-limited) and `POST /v2/stop-call/:id` (only for calls this server created). It ignores anything the browser sends and always uses `RETELL_AGENT_ID`.
+* The browser uses the official **`retell-client-js-sdk` v3** `RetellClient.createWebCall()`, following the proxy pattern from the SDK README. The client has a placeholder key and a custom `fetch` that routes to `/api/retell/...` on our server, where the real key is attached.
+* The proxy exposes only `POST /v3/create-web-call` (rate-limited) and `POST /v2/stop-call/:id` (only for calls this server created). The agent id always comes from `RETELL_AGENT_ID`. The only browser field used is the demo session id, which must exist on the server.
 * The browser only ever receives a **single-call, short-lived `access_token`**.
-* I did not choose a Retell public key, for two reasons. A public key would also live in the browser. And the live transcript needs a key with `Call.Write`, which the SDK README says a web-call-scoped public key doesn't have. The server proxy avoids both problems.
-
-### Automatic booking capture
-
-In SDK v3, the audio connection no longer delivers transcript or "agent talking" events to the browser. The transcript is a separate stream that needs a privileged key. So capture runs on the server, in two layers:
-
-1. **Live (during the call).** The server opens the SDK's own `monitorCall()` (transcript only; it never joins the audio) with the secret key. It relays the transcript to the page over Server-Sent Events and runs the booking extractor on it. A booking is added to the dashboard right after Julia confirms it, with status **Confirmed · Verifying…**.
-2. **Verification (after the call).** The page polls `GET /api/calls/:id/booking`. The server fetches Retell's stored call record and uses, in order:
-   * **Structured post-call analysis**, if you configure it (recommended, see below).
-   * Otherwise the **final transcript**, run through the same extractor.
-
-   A matching booking becomes **Confirmed · Verified**. If the record contradicts the live capture, the row is marked **Needs review**. If Julia cancelled the booking, it is removed.
-
-The extractor (`shared/booking.ts`) is deliberately conservative and handles English and French:
-
-* It requires an **agent** statement of final confirmation, such as "you're all set", "your appointment is confirmed", or "c'est confirmé".
-* It ignores questions ("is that correct?"), hypotheticals ("once a booking is confirmed…"), feature descriptions ("appointments are booked automatically"), and negations.
-* It requires **name, date and time**. If any is missing, the UI says *"Booking not added — details incomplete"* and adds nothing.
-* The latest confirmation wins (callers can change their mind). An agent cancellation after confirming voids the booking.
-* Dates ("tomorrow", "Friday", "October 20th", "vendredi", "le 16 octobre") resolve relative to the call date. Times handle "3 PM", "3:30 p.m.", "15 h 30", "two o'clock" and "noon".
-* There is one appointment per call id, so repeated events never duplicate a row.
-
-The UI is always explicit about the state: listening, captured, verifying, verified, incomplete, not confirmed, or couldn't be verified.
+* In SDK v3, the audio connection carries no transcript. The server reads it with the SDK's `monitorCall()` (transcript only) and relays it to the page over Server-Sent Events, so the key stays on the server.
 
 ### Session isolation
 
-* Appointments live in React state only. There is no database, `localStorage` or `sessionStorage`.
-* **Reset Demo** ends any active call, cancels pending verification, and clears the transcript, capture status and dashboard.
-* Every call gets a new "generation". Late events from an earlier call or a reset session are ignored, so details never leak into the next prospect's demo.
-* The server keeps only call ids (for authorizing the stream/verify endpoints) and a live transcript buffer in memory while a call is being watched. These expire automatically.
+* Each page load creates a demo session on the server. Its appointments live **only in server memory**: no database, no files, no `localStorage` or `sessionStorage`.
+* **Refreshing the page** starts a new, empty session. **Reset Demo** ends any active call and empties the session, so every slot is free again.
+* Two visitors (or two tabs) never see or block each other's appointments.
+* Idle sessions expire after 30 minutes. A server restart (for example, a free-tier host waking up) clears everything, and the page says so.
 
 ---
 
 ## Retell configuration
 
-The demo works with the agent as published, provided these hold:
+The scheduling rules only work if Julia calls the two functions, so this setup is **required**. It needs a public HTTPS URL (your Render link). For local development, use a tunnel such as `cloudflared tunnel --url http://localhost:8787` and use the URL it prints.
 
-1. **The API key** in `.env` must be a secret key from the same workspace as the agent.
-2. **Data storage.** The agent's data storage setting must keep transcripts ("everything", or "everything except PII" if you accept a redacted name). With "basic attributes only", post-call verification can't read the transcript. The UI then says the booking couldn't be verified.
+### 1. Add two custom functions
 
-**Recommended for the most reliable capture:**
+In the Retell dashboard, open the agent and go to **Functions → + Add → Custom Function**. Replace `https://YOUR-APP.onrender.com` with your link.
 
-3. **Add these lines to Julia's prompt** in the Retell dashboard:
+**Function 1 — `check_availability`**
 
-   > When the caller wants to book, ask for their name, the date, and the time, one question at a time. Repeat the details back and ask them to confirm. After they confirm, say exactly: "Perfect, [name], you're all set for [service] on [day and date] at [time]." Always say times with AM or PM (or "15 h" in French). Never say a booking is confirmed before the caller agrees.
+* **Name:** `check_availability`
+* **Description:** `Checks whether a requested appointment start time is free. Every appointment lasts 60 minutes and appointments cannot overlap. Call this after you know the date and time the caller wants, before confirming anything. It never books.`
+* **Method / URL:** `POST https://YOUR-APP.onrender.com/api/tools/check-availability`
+* **Headers:** `X-Julia-Tool-Secret` = the same value as `RETELL_TOOL_SECRET`
+* **Parameters (JSON):**
 
-4. **Optional structured signal: post-call analysis.** In the agent's *Post-Call Analysis* settings, add these custom fields. When they are present, the server uses them in preference to the transcript.
+```json
+{
+  "type": "object",
+  "properties": {
+    "date": { "type": "string", "description": "Requested date as YYYY-MM-DD, or as the caller said it, e.g. 'tomorrow' or 'Friday'" },
+    "time": { "type": "string", "description": "Requested start time, e.g. '8:00 PM' or '20:00'" }
+  },
+  "required": ["date", "time"]
+}
+```
 
-   | Name | Type | Description |
-   | --- | --- | --- |
-   | `booking_confirmed` | Boolean | True only if Julia explicitly confirmed an appointment and the caller agreed |
-   | `customer_name` | Text | The customer's name as confirmed |
-   | `appointment_date` | Text | The confirmed date (YYYY-MM-DD if possible, otherwise as spoken) |
-   | `appointment_time` | Text | The confirmed time, e.g. "3:00 PM" |
-   | `service` | Text | The service booked, e.g. "Haircut" |
+**Function 2 — `book_appointment`**
 
-   Post-call analysis arrives a few seconds after the call ends. The live capture covers the moment of confirmation itself.
+* **Name:** `book_appointment`
+* **Description:** `Books a 60-minute appointment. Only call this after check_availability said the time is available AND the caller has agreed to the details. The appointment exists only if the result says booked: true.`
+* **Method / URL:** `POST https://YOUR-APP.onrender.com/api/tools/book-appointment`
+* **Headers:** `X-Julia-Tool-Secret` = the same value as `RETELL_TOOL_SECRET`
+* **Parameters (JSON):**
 
-No tool or function-calling setup is needed. A Retell custom function would require a publicly reachable webhook URL, which a local demo doesn't have.
+```json
+{
+  "type": "object",
+  "properties": {
+    "customer_name": { "type": "string", "description": "The customer's name" },
+    "date": { "type": "string", "description": "Appointment date as YYYY-MM-DD, or as the caller said it" },
+    "time": { "type": "string", "description": "Appointment start time, e.g. '8:00 PM'" },
+    "service": { "type": "string", "description": "Service requested, e.g. 'Haircut'. Defaults to Haircut" }
+  },
+  "required": ["customer_name", "date", "time"]
+}
+```
+
+For both functions:
+* Turn on **Speak during execution** (e.g. "One moment while I check the schedule") and **Speak after execution**.
+* Use a timeout of about **10 seconds**.
+* Leave **Payload: args only** *off*. The server needs the call id that Retell sends alongside the arguments.
+
+### 2. Replace step 6 of the "Booking Simulation" prompt section
+
+Paste this into Julia's prompt in place of "6. Once confirmed, clearly state that the appointment is booked":
+
+```
+# Scheduling rules (mandatory)
+- Every appointment lasts exactly 60 minutes. You cannot see the calendar; the scheduling functions are the only source of truth.
+- Once you know the caller's name, the date and the time, call check_availability. Do not guess availability.
+- If it returns available: false, say something natural like "That time is already booked. I can offer you 9:00 PM instead. Would that work for you?" Only offer times listed in the result. Wait for the caller to agree, then call check_availability again for the agreed time.
+- When the time is available, repeat the name, service, date and time and ask the caller to confirm. After they say yes, call book_appointment.
+- Only if book_appointment returns booked: true, say: "Perfect, [name], you're all set for [service] on [day and date] at [time]."
+- If book_appointment returns booked: false, never say the appointment is booked. Follow the message in the result and offer its alternatives.
+- Never tell the caller an appointment is booked or confirmed without a successful book_appointment result.
+- If the caller wants a different time after booking, check the new time, then call book_appointment again with the same name; the system moves the appointment.
+```
+
+### 3. Publish, and check data storage
+
+* Click **Publish**. Web calls use the published version.
+* Keep the agent's data storage setting on one that retains transcripts. Otherwise the live transcript (and the safety-net check) is unavailable. Scheduling itself still works.
 
 ---
 
@@ -168,17 +222,23 @@ julia-ai-demo/
 ├── vite.config.ts            # Vite (root: client/, /api proxied to Express)
 ├── tsconfig.json
 ├── server/
-│   ├── index.ts              # Express app, security headers, static serving in prod
+│   ├── index.ts              # starts the server
 │   ├── config.ts             # env loading & validation
 │   ├── logger.ts             # concise logs, no secrets
 │   ├── retell.ts             # server-side Retell client + safe error mapping
 │   ├── callRegistry.ts       # in-memory set of call ids created by this server
-│   ├── liveMonitor.ts        # monitorCall() transcript → SSE + live booking detection
+│   ├── app.ts                # Express app (routes, security headers, static files)
+│   ├── demoSessions.ts       # per-page demo calendars in memory + SSE broadcast
+│   ├── scheduler.ts          # booking authority: check / book / reschedule / dedupe
+│   ├── liveMonitor.ts        # monitorCall() transcript → SSE + "claimed but not booked" check
 │   └── routes/
 │       ├── retellProxy.ts    # narrow, rate-limited proxy for the browser SDK
-│       └── calls.ts          # /stream (SSE) and /booking (post-call verification)
+│       ├── tools.ts          # Retell function endpoints (signature / secret auth)
+│       ├── demoSessions.ts   # create / events (SSE) / reset
+│       └── calls.ts          # live transcript stream (SSE)
 ├── shared/
-│   ├── booking.ts            # booking extractor (EN/FR) — pure, unit-tested
+│   ├── scheduling.ts         # 60-minute slots, overlap rules, alternatives — pure, tested
+│   ├── booking.ts            # EN/FR date/time parsing + confirmation detection — pure, tested
 │   └── api.ts                # types shared by server and client
 ├── client/
 │   ├── index.html            # Google Fonts: Inter 400–600, Nunito 600–800
@@ -187,11 +247,11 @@ julia-ai-demo/
 │       ├── App.tsx, main.tsx
 │       ├── styles/theme.css  # brand design tokens (colours, type, spacing, radii)
 │       ├── styles/global.css # components, responsive & reduced-motion rules
-│       ├── hooks/useVoiceCall.ts     # call lifecycle, mic flow, SSE, verification
-│       ├── hooks/useAppointments.ts  # in-memory appointments (one per call)
+│       ├── hooks/useVoiceCall.ts     # call lifecycle, mic flow, live transcript
+│       ├── hooks/useDemoSession.ts   # this page's demo calendar (live from the server)
 │       ├── lib/              # SDK loader (proxied), types, formatting
 │       └── components/       # Navbar, Hero, VoiceDemo, VoiceOrb, CallControls,
-│                             # LiveTranscript, CaptureStatus, AppointmentsDashboard,
+│                             # LiveTranscript, SchedulingStatus, AppointmentsDashboard,
 │                             # AppointmentRow, ResetDemoButton, Capabilities, Footer
 ├── scripts/check-bundle-secrets.mjs
 └── tests/                    # node:test unit tests (run with tsx)
@@ -229,10 +289,19 @@ Usually a VPN, corporate firewall or proxy that blocks WebRTC/UDP. Try another n
 The per-IP limit was hit. Wait, or raise `CALL_RATE_LIMIT_MAX` in `.env`.
 
 **Live transcript says "unavailable"**
-The server couldn't open Retell's transcript stream (Node < 22, network, or key permissions). The call still works, and the booking is checked from Retell's call record when the call ends.
+The server couldn't open Retell's transcript stream (Node < 22, network, or key permissions). The call and scheduling still work.
 
-**"Booking couldn't be verified"**
-Retell didn't return a transcript. Check the agent's data storage setting (see *Retell configuration*).
+**Julia says she booked it, but nothing appears / "the scheduler disagrees"**
+Julia is not calling `book_appointment`. Check that both functions exist on the agent, the agent is **published**, the URLs point at your deployed app, and the prompt section from *Retell configuration* is in place. Server logs show every function call (`[tools] book_appointment … → booked`).
+
+**Function calls fail with 401 in the server logs**
+The `X-Julia-Tool-Secret` header on the function doesn't match `RETELL_TOOL_SECRET` (watch for spaces), or the signature couldn't be verified. Set the same secret in both places and redeploy.
+
+**Julia can't book anything locally**
+Retell can't reach `localhost`. Use your Render URL in the functions, or run a tunnel (`cloudflared tunnel --url http://localhost:8787`) and use its HTTPS URL.
+
+**"The demo server restarted, so the dashboard was cleared"**
+Free hosting tiers sleep and restart. Demo calendars live in memory, so a restart empties them. That is expected.
 
 ---
 
@@ -240,19 +309,18 @@ Retell didn't return a transcript. Check the agent's data storage setting (see *
 
 Verified locally (in a sandbox without access to Retell's servers):
 
-* `npm install`, `npm run typecheck`, `npm run build` and `npm test` (15 tests) all pass.
-* The backend starts and serves health, the proxy allow-list, rate limiting, input validation and unknown-call rejection. It handles a missing key without crashing.
-* **Secret handling:** with a dummy key in `.env`, the built bundle, every served asset, and API responses and logs contain no trace of it.
-* A browser run (Playwright/Chromium, Retell SDK and Retell responses stubbed) covered:
-  * The empty state.
-  * A confirmed booking appearing exactly once, despite repeated live events.
-  * The booking being verified after the call.
-  * An incomplete call adding nothing.
-  * Unexpected call termination being reported.
-  * Mute.
-  * Reset Demo clearing everything.
-  * A refresh clearing everything, with no web storage used.
-  * The denied-microphone message.
-  * No horizontal overflow at 390 px and 820 px.
+* `npm run typecheck`, `npm run build` and `npm test` all pass. There are 26 tests:
+  * **Scheduling rules:** 60-minute intervals, partial overlaps refused, back-to-back allowed, 9:00 PM offered when 8:00 PM is taken, outside hours and past times, full days rolling over, rescheduling.
+  * **HTTP tests of the function endpoints, using requests signed exactly as Retell signs them:**
+    * unsigned or forged requests rejected;
+    * a check never books;
+    * the same confirmation twice gives one appointment;
+    * a conflicting booking is refused even when the agent skips the check;
+    * reschedule moves rather than duplicates;
+    * Reset frees every slot;
+    * sessions are isolated;
+    * calls without a live demo session are refused.
+* **Browser run against the real scheduler** (Playwright/Chromium). Only the Retell audio was stubbed, and the harness sent signed function calls as Retell would. Covered: booking appears live; duplicate ignored; conflict shows "That time isn't available" with 9:00 PM offered; the conflicting booking is refused; back-to-back accepted; Reset frees 8:00 PM again; refresh starts an empty calendar with no web storage; no horizontal overflow on mobile.
+* **Secret handling:** with a dummy key, the built bundle, served assets, API responses and logs contain no trace of it.
 
-**Still needs a real test with your credentials and a microphone:** an actual Retell voice call, and the live transcript stream and post-call verification against your agent. Run through the *Try this script* steps on the page once after adding your key.
+**Still needs a real test with your Retell agent:** a voice call where Julia actually calls `check_availability` and `book_appointment`. This needs the function setup above and a publish. Try: book 8 PM, then start a new call and ask for 8:30 PM. Julia should offer 9:00 PM.

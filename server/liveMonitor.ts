@@ -2,6 +2,8 @@ import { RetellClient, type MonitorSession, type LiveCallUtterance } from "retel
 import type { Response } from "express";
 import { config } from "./config.ts";
 import { log, shortId } from "./logger.ts";
+import { sessionIdForCall } from "./callRegistry.ts";
+import { callHasBooking } from "./demoSessions.ts";
 import { extractBooking, type TranscriptLine } from "../shared/booking.ts";
 import type { LiveEvent } from "../shared/api.ts";
 
@@ -11,9 +13,13 @@ import type { LiveEvent } from "../shared/api.ts";
  * With Retell's v3 web calls the browser only receives audio; the transcript
  * stream needs a key with Call.Write, which must never be shipped to the
  * browser. So the server watches the call with the official SDK's
- * `monitorCall()` (transcript only — it never joins the audio), runs the
- * booking extractor on it, and relays results to the page over Server-Sent
- * Events. The secret key stays on the server.
+ * `monitorCall()` (transcript only — it never joins the audio) and relays it
+ * to the page over Server-Sent Events. The secret key stays on the server.
+ *
+ * Bookings are NOT created from the transcript — only the scheduler (via
+ * Julia's book_appointment function) can do that. The transcript is used as a
+ * safety net: if Julia says a booking is confirmed but the scheduler holds no
+ * booking for this call, the page is warned.
  */
 
 const EXTRACT_DEBOUNCE_MS = 1200;
@@ -25,8 +31,7 @@ class LiveMonitor {
   private lines: TranscriptLine[] = [];
   private lastTranscript?: LiveEvent;
   private lastMonitor: LiveEvent = { type: "monitor", state: "connecting" };
-  private lastBooking?: LiveEvent;
-  private lastBookingKey = "";
+  private lastMismatch?: LiveEvent;
   private ended?: LiveEvent;
   private debounce?: NodeJS.Timeout;
   private idleTimer?: NodeJS.Timeout;
@@ -58,7 +63,7 @@ class LiveMonitor {
     this.subscribers.add(res);
     clearTimeout(this.idleTimer);
     // Replay current state to late joiners (e.g. a reconnecting EventSource).
-    for (const ev of [this.lastMonitor, this.lastTranscript, this.lastBooking, this.ended]) {
+    for (const ev of [this.lastMonitor, this.lastTranscript, this.lastMismatch, this.ended]) {
       if (ev) send(res, ev);
     }
   }
@@ -108,17 +113,12 @@ class LiveMonitor {
 
   private evaluate() {
     const result = extractBooking(this.lines, { referenceDate: this.startedAt, timeZone: config.timeZone });
-    const relevant =
-      result.status === "confirmed" ||
-      result.status === "incomplete" ||
-      (result.status === "not_confirmed" && result.reason === "cancelled" && this.lastBooking);
-    if (!relevant) return;
-    const key = JSON.stringify(result.status === "confirmed" ? result.booking : result);
-    if (key === this.lastBookingKey) return;
-    this.lastBookingKey = key;
-    this.lastBooking = { type: "booking", result };
-    log.info("monitor", `live booking signal for ${shortId(this.callId)}: ${result.status}`);
-    this.broadcast(this.lastBooking);
+    if (result.status !== "confirmed" && result.status !== "incomplete") return;
+    if (callHasBooking(sessionIdForCall(this.callId), this.callId)) return;
+    if (this.lastMismatch?.type === "mismatch" && this.lastMismatch.evidence === result.evidence) return;
+    this.lastMismatch = { type: "mismatch", evidence: result.evidence };
+    log.warn("monitor", `Julia announced a booking on ${shortId(this.callId)} without a scheduler booking`);
+    this.broadcast(this.lastMismatch);
   }
 
   private handleEnd(reason: string | null) {
@@ -145,7 +145,7 @@ class LiveMonitor {
       this.lastMonitor = {
         type: "monitor",
         state: "unavailable",
-        message: "Live transcript unavailable. The booking will be verified when the call ends.",
+        message: "Live transcript unavailable for this call.",
       };
       this.broadcast(this.lastMonitor);
     }
