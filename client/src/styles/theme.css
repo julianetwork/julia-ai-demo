@@ -1,0 +1,105 @@
+/* ─────────────────────────────────────────────────────────────
+   Julia AI design tokens — the single source of brand values.
+   Components reference these variables; no raw hex elsewhere.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  /* Brand palette */
+  --color-charcoal: #28262c;
+  --color-deep-blue: #14248a;
+  --color-off-white: #f9f5ff;
+  --color-teal-blue: #007ea7;
+  --color-cyan: #00a7e1;
+
+  /* The one non-palette colour: errors need a distinct, recognisable signal
+     (blue would read as "info"). Used sparingly for icons/borders only. */
+  --color-danger: #e5484d;
+
+  /* Derived tints (same palette, varied opacity) */
+  --charcoal-rgb: 40, 38, 44;
+  --deep-blue-rgb: 20, 36, 138;
+  --off-white-rgb: 249, 245, 255;
+  --teal-rgb: 0, 126, 167;
+  --cyan-rgb: 0, 167, 225;
+  --danger-rgb: 229, 72, 77;
+
+  /* Light page theme (default) */
+  --surface-page: var(--color-off-white);
+  --surface-raised: rgba(var(--deep-blue-rgb), 0.035);
+  --surface-raised-strong: rgba(var(--deep-blue-rgb), 0.07);
+  --surface-light: var(--color-off-white);
+  --border-subtle: rgba(var(--charcoal-rgb), 0.1);
+  --border-strong: rgba(var(--charcoal-rgb), 0.2);
+  --text-primary: var(--color-charcoal);
+  --text-secondary: rgba(var(--charcoal-rgb), 0.78);
+  --text-muted: rgba(var(--charcoal-rgb), 0.64);
+  --text-on-light: var(--color-charcoal);
+  --text-on-light-muted: rgba(var(--charcoal-rgb), 0.68);
+  /* Accent text must stay readable on off-white, so it uses the deep blue. */
+  --text-accent: var(--color-deep-blue);
+  --link: var(--color-deep-blue);
+
+  --gradient-brand: linear-gradient(135deg, var(--color-cyan) 0%, var(--color-teal-blue) 45%, var(--color-deep-blue) 100%);
+  --gradient-glow: radial-gradient(60% 60% at 50% 40%, rgba(var(--cyan-rgb), 0.18) 0%, rgba(var(--deep-blue-rgb), 0.12) 45%, transparent 75%);
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-display: "Nunito", "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.75rem;
+  --text-3xl: clamp(1.9rem, 1.4rem + 2vw, 2.5rem);
+  --text-hero: clamp(2.4rem, 1.6rem + 3.6vw, 4rem);
+  --leading-tight: 1.15;
+  --leading-snug: 1.35;
+  --leading-normal: 1.6;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+  --space-16: 4rem;
+  --space-20: 5rem;
+
+  /* Radii & shadows */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-xl: 26px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 2px rgba(var(--charcoal-rgb), 0.05), 0 18px 40px -28px rgba(var(--deep-blue-rgb), 0.35);
+  --shadow-light: 0 1px 2px rgba(var(--charcoal-rgb), 0.06), 0 30px 60px -36px rgba(var(--deep-blue-rgb), 0.45);
+  --glow-cyan: 0 0 0 1px rgba(var(--cyan-rgb), 0.35), 0 10px 30px -8px rgba(var(--cyan-rgb), 0.45);
+
+  /* Interaction */
+  --focus-ring: 0 0 0 3px rgba(var(--cyan-rgb), 0.55);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --duration-fast: 150ms;
+  --duration-base: 250ms;
+
+  --container: 1160px;
+  --gutter: clamp(1rem, 0.5rem + 2vw, 2rem);
+}
+
+/* Dark scope: the voice stage stays a charcoal "device" panel so the orb
+   glows. Components inside reuse the same semantic tokens. */
+.theme-dark {
+  --surface-raised: rgba(var(--off-white-rgb), 0.045);
+  --surface-raised-strong: rgba(var(--off-white-rgb), 0.08);
+  --border-subtle: rgba(var(--off-white-rgb), 0.1);
+  --border-strong: rgba(var(--off-white-rgb), 0.2);
+  --text-primary: var(--color-off-white);
+  --text-secondary: rgba(var(--off-white-rgb), 0.76);
+  --text-muted: rgba(var(--off-white-rgb), 0.62);
+  --text-accent: var(--color-cyan);
+  --link: var(--color-cyan);
+  color: var(--text-primary);
+}
