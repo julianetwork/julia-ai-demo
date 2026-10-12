@@ -10,7 +10,7 @@ import { log } from "./logger.ts";
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", "loopback");
+app.set("trust proxy", config.trustProxy);
 
 app.use((_req, res, next) => {
   res.set({

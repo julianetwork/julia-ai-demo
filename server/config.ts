@@ -6,6 +6,19 @@ const num = (value: string | undefined, fallback: number) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
+/**
+ * How many reverse proxies sit in front of the app, so rate limiting sees the
+ * real visitor IP. Locally: none. On Render/Railway/Fly: set TRUST_PROXY=true.
+ */
+function parseTrustProxy(value: string | undefined): boolean | number | string {
+  const v = (value ?? "").trim();
+  if (!v) return "loopback";
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v;
+}
+
 const apiKey = (process.env.RETELL_API_KEY ?? "").trim();
 const placeholder = !apiKey || apiKey === "your_retell_secret_api_key_here";
 
@@ -18,6 +31,7 @@ export const config = {
     max: num(process.env.CALL_RATE_LIMIT_MAX, 6),
     windowMs: num(process.env.CALL_RATE_LIMIT_WINDOW_MINUTES, 10) * 60_000,
   },
+  trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   timeZone: process.env.DEMO_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
 };
 

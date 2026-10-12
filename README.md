@@ -46,6 +46,16 @@ npm start          # serves the app and the API on http://localhost:8787
 | `npm run typecheck` | TypeScript only |
 | `npm run check:secrets` | Scans `client/dist` to prove no Retell secret is in the bundle (also checks against the real key in `.env`) |
 
+### Deploy to Render (public HTTPS link)
+
+1. In Render choose **New → Web Service** and connect this GitHub repository and branch.
+2. Settings:
+   * **Language:** Node · **Build command:** `npm ci && npm run build` · **Start command:** `npm start`
+   * **Environment variables:** `RETELL_API_KEY` (your secret key), `TRUST_PROXY=true`, `DEMO_TIMEZONE=America/Toronto`
+3. Deploy. Your link is `https://<service-name>.onrender.com`. Render provides HTTPS, which the microphone requires.
+
+On the free tier the service sleeps when idle, so the first visit can take about 30 seconds. Open the link before a meeting.
+
 ---
 
 ## Environment variables (`.env`)
@@ -58,6 +68,7 @@ npm start          # serves the app and the API on http://localhost:8787
 | `CALL_RATE_LIMIT_MAX` | no | `6` | Web calls one IP may start per window |
 | `CALL_RATE_LIMIT_WINDOW_MINUTES` | no | `10` | Rate-limit window |
 | `DEMO_TIMEZONE` | no | server's zone | IANA zone (e.g. `America/Toronto`) used to resolve "tomorrow", "Friday"… |
+| `TRUST_PROXY` | no | `loopback` | Set to `true` when hosted behind a proxy (Render, Railway, Fly.io) so rate limiting sees real visitor IPs |
 
 If `RETELL_API_KEY` is missing, the server still starts and logs a warning. The page then shows a friendly "not configured" message instead of crashing.
 
