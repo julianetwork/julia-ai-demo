@@ -8,8 +8,10 @@ const num = (value: string | undefined, fallback: number) => {
 };
 
 /**
- * How many reverse proxies sit in front of the app, so rate limiting sees the
- * real visitor IP. Locally: none. On Render/Railway/Fly: set TRUST_PROXY=true.
+ * How many reverse proxies sit in front of the app, so per-IP rate limiting
+ * sees the real visitor IP. Locally: none. When hosted, set the exact hop
+ * count (the server logs it — see "proxy hops" in the logs). `true` trusts any
+ * X-Forwarded-For value a visitor sends, so it is spoofable and discouraged.
  */
 function parseTrustProxy(value: string | undefined): boolean | number | string {
   const v = (value ?? "").trim();
@@ -29,7 +31,10 @@ export const config = {
   retellApiKey: placeholder ? "" : apiKey,
   retellAgentId: (process.env.RETELL_AGENT_ID ?? "").trim() || "agent_022698413456f29efd82adef26",
   rateLimit: {
+    /** Per visitor IP. */
     max: num(process.env.CALL_RATE_LIMIT_MAX, 6),
+    /** Across all visitors — cannot be bypassed by spoofing IPs; caps Retell spend. */
+    globalMax: num(process.env.CALL_RATE_LIMIT_GLOBAL_MAX, 40),
     windowMs: num(process.env.CALL_RATE_LIMIT_WINDOW_MINUTES, 10) * 60_000,
   },
   /** Optional shared secret Retell sends in the X-Julia-Tool-Secret header of function calls. */
@@ -51,4 +56,11 @@ try {
 
 if (process.env.BUSINESS_HOURS && !parseBusinessHours(process.env.BUSINESS_HOURS)) {
   console.warn(`[config] BUSINESS_HOURS "${process.env.BUSINESS_HOURS}" is invalid (use HH:MM-HH:MM); using 09:00-22:00.`);
+}
+
+if (config.trustProxy === true) {
+  console.warn(
+    "[config] TRUST_PROXY=true trusts any X-Forwarded-For a visitor sends, so per-IP rate limits can be bypassed. " +
+      'Set TRUST_PROXY to the number of proxy hops instead (the server logs it as "proxy hops"). The site-wide call limit still applies.',
+  );
 }

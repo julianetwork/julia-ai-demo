@@ -28,7 +28,20 @@ const createCallLimiter = rateLimit({
   },
 });
 
-retellProxy.post("/v3/create-web-call", createCallLimiter, async (req, res) => {
+// Site-wide cap that does not depend on visitor IPs, so it holds even if per-IP limits are bypassed.
+const globalCallLimiter = rateLimit({
+  windowMs: config.rateLimit.windowMs,
+  limit: config.rateLimit.globalMax,
+  keyGenerator: () => "all-visitors",
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: (_req, res) => {
+    log.warn("calls", "site-wide call limit reached");
+    res.status(429).json({ error_message: "The demo is very busy right now. Please try again in a few minutes." });
+  },
+});
+
+retellProxy.post("/v3/create-web-call", globalCallLimiter, createCallLimiter, async (req, res) => {
   if (!isRetellConfigured()) {
     log.error("calls", "cannot create call: RETELL_API_KEY is missing (see .env.example)");
     return res.status(503).json({

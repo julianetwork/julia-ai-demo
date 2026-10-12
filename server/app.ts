@@ -13,6 +13,25 @@ export const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", config.trustProxy);
 
+// Logs how many addresses reach us in X-Forwarded-For (counts only, never the IPs).
+// For a normal browser visit this equals the number of proxies in front of the app,
+// which is the value TRUST_PROXY should be set to. Visitors can only add entries,
+// so the smallest count seen is the trustworthy one.
+let minHops = Infinity;
+let hopLogs = 0;
+app.use((req, _res, next) => {
+  const xff = req.get("x-forwarded-for");
+  if (xff && hopLogs < 5) {
+    const hops = xff.split(",").filter((s) => s.trim()).length;
+    if (hops < minHops) {
+      minHops = hops;
+      hopLogs++;
+      log.info("http", `proxy hops: X-Forwarded-For has ${hops} address(es) → set TRUST_PROXY=${hops} (current: ${String(config.trustProxy)})`);
+    }
+  }
+  next();
+});
+
 app.use((_req, res, next) => {
   res.set({
     "X-Content-Type-Options": "nosniff",

@@ -51,7 +51,7 @@ npm start          # serves the app and the API on http://localhost:8787
 1. In Render choose **New → Web Service** and connect this GitHub repository and branch.
 2. Settings:
    * **Language:** Node · **Build command:** `npm ci && npm run build` · **Start command:** `npm start`
-   * **Environment variables:** `RETELL_API_KEY` (your secret key), `TRUST_PROXY=true`, `DEMO_TIMEZONE=America/Toronto`, `RETELL_TOOL_SECRET` (a long random string), optionally `BUSINESS_HOURS`
+   * **Environment variables:** `RETELL_API_KEY` (your secret key), `TRUST_PROXY` (the hop count the server logs as "proxy hops", typically `3` on Render), `DEMO_TIMEZONE=America/Toronto`, `RETELL_TOOL_SECRET` (a long random string), optionally `BUSINESS_HOURS`
 3. Deploy. Your link is `https://<service-name>.onrender.com`. Render provides HTTPS, which the microphone requires.
 4. Set up Julia's two scheduling functions in Retell using that URL (see [Retell configuration](#retell-configuration)).
 
@@ -69,7 +69,8 @@ On the free tier the service sleeps when idle, so the first visit can take about
 | `CALL_RATE_LIMIT_MAX` | no | `6` | Web calls one IP may start per window |
 | `CALL_RATE_LIMIT_WINDOW_MINUTES` | no | `10` | Rate-limit window |
 | `DEMO_TIMEZONE` | no | server's zone | IANA zone (e.g. `America/Toronto`) used to resolve "tomorrow", "Friday"… |
-| `TRUST_PROXY` | no | `loopback` | Set to `true` when hosted behind a proxy (Render, Railway, Fly.io) so rate limiting sees real visitor IPs |
+| `TRUST_PROXY` | no | `loopback` | When hosted, the number of proxy hops in front of the app, so per-IP limits see real visitor IPs. The server logs the value to use ("proxy hops"). Avoid `true`, which visitors can spoof |
+| `CALL_RATE_LIMIT_GLOBAL_MAX` | no | `40` | New calls allowed per window across all visitors. Independent of IPs, so it can't be bypassed |
 | `BUSINESS_HOURS` | no | `09:00-22:00` | Opening hours in the shop's time zone. Slots are 60 minutes, so the last start is one hour before closing |
 | `RETELL_TOOL_SECRET` | recommended | – | Shared secret that Retell sends in an `X-Julia-Tool-Secret` header on the scheduling functions. Signed Retell requests are accepted either way |
 
