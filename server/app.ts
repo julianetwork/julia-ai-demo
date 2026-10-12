@@ -19,12 +19,13 @@ app.set("trust proxy", config.trustProxy);
 // so the smallest count seen is the trustworthy one.
 let minHops = Infinity;
 let hopLogs = 0;
+const countHops = (xff: string | undefined) => (xff ? xff.split(",").filter((s) => s.trim()).length : 0);
 app.use((req, _res, next) => {
   const xff = req.get("x-forwarded-for");
+  const hops = countHops(xff);
+  if (hops > 0 && hops < minHops) minHops = hops;
   if (xff && hopLogs < 5) {
-    const hops = xff.split(",").filter((s) => s.trim()).length;
-    if (hops < minHops) {
-      minHops = hops;
+    if (hops === minHops) {
       hopLogs++;
       log.info("http", `proxy hops: X-Forwarded-For has ${hops} address(es) → set TRUST_PROXY=${hops} (current: ${String(config.trustProxy)})`);
     }
@@ -46,13 +47,17 @@ app.use((_req, res, next) => {
 app.use("/api/tools", toolsRouter);
 app.use("/api", express.json({ limit: "16kb" }));
 
-app.get("/api/health", (_req, res) => {
+app.get("/api/health", (req, res) => {
   // Reports whether things are configured — never their values.
   res.json({
     ok: true,
     retellConfigured: isRetellConfigured(),
     agentConfigured: Boolean(config.retellAgentId),
     toolSecretConfigured: Boolean(config.toolSecret),
+    // Counts only (no addresses): use proxyHops as the value for TRUST_PROXY when hosted.
+    proxyHops: Number.isFinite(minHops) ? minHops : countHops(req.get("x-forwarded-for")),
+    trustProxy: String(config.trustProxy),
+    trustProxyOk: config.trustProxy !== true && (!Number.isFinite(minHops) || config.trustProxy === minHops),
   });
 });
 app.use("/api/retell", retellProxy);
