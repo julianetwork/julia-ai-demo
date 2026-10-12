@@ -38,18 +38,30 @@ function secretMatches(provided: string | undefined): boolean {
 }
 
 async function authenticate(req: Request, res: Response, next: NextFunction) {
-  if (secretMatches(req.get("x-julia-tool-secret"))) return next();
+  const secretHeader = req.get("x-julia-tool-secret");
+  if (secretMatches(secretHeader)) return next();
   const signature = req.get("x-retell-signature");
   const raw = (req as RawRequest).rawBody;
+  let signatureValid = false;
   if (signature && raw && config.retellApiKey) {
     try {
-      if (await verify(raw, config.retellApiKey, signature)) return next();
+      signatureValid = await verify(raw, config.retellApiKey, signature);
     } catch {
-      /* fall through */
+      /* treated as invalid */
     }
   }
-  log.warn("tools", `rejected unauthenticated tool call from ${req.ip}`);
-  res.status(401).json({ error: "Unauthorized" });
+  if (signatureValid) return next();
+  // Explain exactly why (without revealing any secret) so setup problems are easy to fix.
+  const reasons = [
+    !config.toolSecret
+      ? "RETELL_TOOL_SECRET is not set on the server"
+      : !secretHeader
+        ? "the function has no X-Julia-Tool-Secret header"
+        : "the X-Julia-Tool-Secret header does not match RETELL_TOOL_SECRET",
+    !signature ? "no X-Retell-Signature header" : "X-Retell-Signature did not verify against RETELL_API_KEY",
+  ];
+  log.warn("tools", `401 for ${req.path}: ${reasons.join("; ")}`);
+  res.status(401).json({ error: "Unauthorized", hint: "Set the same secret in RETELL_TOOL_SECRET and the function's X-Julia-Tool-Secret header." });
 }
 
 interface ToolBody {
@@ -91,4 +103,10 @@ toolsRouter.post("/book-appointment", authenticate, (req, res) => {
   const result = bookSlot(session, callId, args(req));
   log.info("tools", `book_appointment ${callId ? shortId(callId) : "(no call id)"}${attached ? "" : " [no demo page]"} → ${result.booked ? "booked" : result.reason}`);
   res.json(result);
+});
+
+// A function URL that doesn't match either endpoint: log it so a typo in Retell is visible.
+toolsRouter.use((req, res) => {
+  log.warn("tools", `no such function endpoint: ${req.method} /api/tools${req.path} — expected POST /api/tools/check-availability or /api/tools/book-appointment`);
+  res.status(404).json({ error: "Unknown function endpoint" });
 });
