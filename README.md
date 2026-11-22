@@ -394,3 +394,24 @@ curl -X POST https://YOUR-APP.onrender.com/api/jarvis/text-me \
 ```
 
 Both only reach the **first** number in `JARVIS_OWNER_NUMBERS`. A `to` field is ignored, so a leaked secret can't make Jarvis call or text strangers. In the Jarvis prompt, `{{call_reason}}` holds the reason for an outbound call.
+
+### Daily briefing
+
+`POST /api/jarvis/briefing` builds a short plain-text summary of today's calendar (first) and unread primary-inbox mail, capped at 600 characters with "+N more" when the list is long:
+
+```
+Good morning. Sunday, November 22: 3:00 PM Flight lesson; 6:30 PM CASARA. Unread (2): CASARA: Volunteer Acceptance; Transport Canada: ROC-A exam.
+```
+
+```bash
+# Text the briefing (default):
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/briefing \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"mode":"text"}'
+
+# Or have Jarvis call and read it:  -d '{"mode":"call"}'
+```
+
+It uses the same `X-Jarvis-Secret` and only reaches the first number in `JARVIS_OWNER_NUMBERS`. Without Google connected it returns 503. For `call`, the agent gets `{{call_reason}}` = "daily briefing" and `{{briefing}}` with the text; add a line to the Jarvis prompt such as "If {{briefing}} is set, read it first, then ask what they need."
+
+Run it from any scheduler, for example a Render Cron Job or a scheduled task that runs the curl above at 7:30 AM Toronto time. Cron schedules are usually in UTC, so 7:30 AM Toronto is `30 12 * * *` in winter (EST) and `30 11 * * *` in summer (EDT), or use a scheduler that accepts a time zone.

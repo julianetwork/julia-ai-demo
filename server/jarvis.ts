@@ -65,7 +65,7 @@ function spokenTime(iso: string): string {
 
 // ─────────────────────────── calendar ───────────────────────────
 
-interface GEvent {
+export interface GEvent {
   id: string;
   summary?: string;
   location?: string;
@@ -91,13 +91,22 @@ function describe(e: GEvent): string {
   return `${spokenTime(e.start.dateTime)} to ${spokenTime(e.end.dateTime!)}: ${title}${e.location ? ` at ${e.location}` : ""}`;
 }
 
+/** Events on one calendar day in the owner's time zone (midnight to midnight). */
+export function eventsOnDay(dateISO: string): Promise<GEvent[]> {
+  return eventsBetween(zonedToUtc(dateISO, 0, config.timeZone), zonedToUtc(addDays(dateISO, 1), 0, config.timeZone));
+}
+
+/** "3:00 PM Flight lesson" — the compact form used in texts. */
+export function shortEvent(e: GEvent): string {
+  const title = e.summary || "Untitled event";
+  return e.start.dateTime ? `${spokenTime(e.start.dateTime)} ${title}` : `All day ${title}`;
+}
+
 /** get_schedule(date?) — the owner's events for one day (default today). */
 export async function getSchedule(args: Args) {
   const day = resolveDay(str(args.date));
   if (!day) return { ok: false, message: `Could not understand the date "${str(args.date)}". Ask the owner to say it another way.` };
-  const start = zonedToUtc(day.dateISO, 0, config.timeZone);
-  const end = zonedToUtc(addDays(day.dateISO, 1), 0, config.timeZone);
-  const events = await eventsBetween(start, end);
+  const events = await eventsOnDay(day.dateISO);
   const label = formatDay(day.dateISO);
   return {
     ok: true,

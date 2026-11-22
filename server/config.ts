@@ -55,7 +55,7 @@ export const config = {
     agentId: (process.env.JARVIS_AGENT_ID ?? "").trim(),
     /** Jarvis's own number (Twilio, imported into Retell) — used for outbound calls and texts. */
     phoneNumber: (process.env.JARVIS_PHONE_NUMBER ?? "").trim(),
-    /** Secret for POST /api/jarvis/call-me and /api/jarvis/text-me (header X-Jarvis-Secret). */
+    /** Secret for POST /api/jarvis/call-me, /text-me and /briefing (header X-Jarvis-Secret). */
     adminSecret: (process.env.JARVIS_ADMIN_SECRET ?? "").trim(),
   },
   /** Telnyx API key (alternative to Twilio for texts). If set, Telnyx is used. */
