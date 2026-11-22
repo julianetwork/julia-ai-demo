@@ -53,6 +53,14 @@ export const config = {
     ownerNumbers: (process.env.JARVIS_OWNER_NUMBERS ?? "").split(",").map((n) => n.trim()).filter(Boolean),
     /** Optional: only accept Jarvis function calls from this Retell agent. */
     agentId: (process.env.JARVIS_AGENT_ID ?? "").trim(),
+    /** Jarvis's own number (Twilio, imported into Retell) — used for outbound calls and texts. */
+    phoneNumber: (process.env.JARVIS_PHONE_NUMBER ?? "").trim(),
+    /** Secret for POST /api/jarvis/call-me and /api/jarvis/text-me (header X-Jarvis-Secret). */
+    adminSecret: (process.env.JARVIS_ADMIN_SECRET ?? "").trim(),
+  },
+  twilio: {
+    accountSid: (process.env.TWILIO_ACCOUNT_SID ?? "").trim(),
+    authToken: (process.env.TWILIO_AUTH_TOKEN ?? "").trim(),
   },
 };
 

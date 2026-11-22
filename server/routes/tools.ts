@@ -6,7 +6,7 @@ import { sessionIdForCall, CALL_ID_PATTERN } from "../callRegistry.ts";
 import { getSession, ephemeralSessionForCall, type DemoSession } from "../demoSessions.ts";
 import { checkSlot, bookSlot } from "../scheduler.ts";
 import { log, shortId } from "../logger.ts";
-import { isOwnerCall, REFUSED, getSchedule, createEvent, inboxSummary, draftEmail, type JarvisCall } from "../jarvis.ts";
+import { isOwnerCall, REFUSED, getSchedule, createEvent, inboxSummary, draftEmail, textMe, type JarvisCall } from "../jarvis.ts";
 import { GoogleError } from "../google.ts";
 
 /**
@@ -114,6 +114,7 @@ const jarvisTools: Record<string, (a: Record<string, unknown>) => Promise<{ mess
   "create-event": createEvent,
   "inbox-summary": inboxSummary,
   "draft-email": draftEmail,
+  "text-me": textMe,
 };
 
 toolsRouter.post("/jarvis/:fn", authenticate, async (req, res) => {

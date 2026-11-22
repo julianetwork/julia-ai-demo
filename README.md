@@ -373,3 +373,23 @@ You are Jarvis, the personal assistant of the person calling. Be brief, warm and
 - Before draft_email, spell the email address back letter by letter and read a one-line summary of the body. Say clearly that it is saved as a draft in Gmail and was NOT sent.
 - Dates: pass what they said ("tomorrow", "Friday", "2026-11-25"). Times like "3 PM".
 ```
+
+### Jarvis calls and texts you (Twilio)
+
+1. Buy a number in Twilio and import it into Retell (**Phone Numbers → Import → Twilio**). Set Jarvis as its inbound and outbound agent.
+2. Set `JARVIS_PHONE_NUMBER`, `JARVIS_ADMIN_SECRET`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` on the server.
+3. Add a fifth Retell function, `text_me(message)`, as a POST to `/api/tools/jarvis/text-me`. Then "text me that address" works during a call.
+
+```bash
+# Ring your phone now:
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/call-me \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"reason":"test call"}'
+
+# Text yourself:
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/text-me \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"message":"Jarvis online."}'
+```
+
+Both only reach the **first** number in `JARVIS_OWNER_NUMBERS`. A `to` field is ignored, so a leaked secret can't make Jarvis call or text strangers. In the Jarvis prompt, `{{call_reason}}` holds the reason for an outbound call.

@@ -7,6 +7,7 @@ import { retellProxy } from "./routes/retellProxy.ts";
 import { callsRouter } from "./routes/calls.ts";
 import { demoSessionsRouter } from "./routes/demoSessions.ts";
 import { toolsRouter } from "./routes/tools.ts";
+import { jarvisAdminRouter } from "./routes/jarvisAdmin.ts";
 import { log } from "./logger.ts";
 import { isGoogleConfigured } from "./google.ts";
 
@@ -66,6 +67,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/retell", retellProxy);
 app.use("/api/calls", callsRouter);
 app.use("/api/demo-sessions", demoSessionsRouter);
+app.use("/api/jarvis", jarvisAdminRouter);
 app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
 
 // Malformed JSON and other request errors: answer safely, log briefly.

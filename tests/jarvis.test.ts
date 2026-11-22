@@ -9,6 +9,10 @@ process.env.GOOGLE_CLIENT_ID = "cid";
 process.env.GOOGLE_CLIENT_SECRET = "csecret";
 process.env.GOOGLE_REFRESH_TOKEN = "rtoken";
 process.env.JARVIS_OWNER_NUMBERS = "+1 (905) 555-0100";
+process.env.JARVIS_PHONE_NUMBER = "+12895550123";
+process.env.JARVIS_ADMIN_SECRET = "admin-secret-for-tests-0123456789";
+process.env.TWILIO_ACCOUNT_SID = "AC_test";
+process.env.TWILIO_AUTH_TOKEN = "twilio_token";
 
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -18,6 +22,7 @@ import { sign } from "retell-sdk";
 
 const { app } = await import("../server/app.ts");
 const { setGoogleFetch, zonedToUtc } = await import("../server/google.ts");
+const { setTwilioFetch } = await import("../server/jarvis.ts");
 
 let server: Server;
 let base = "";
@@ -145,4 +150,36 @@ test("saves drafts only, and validates the address", async () => {
 test("zonedToUtc handles DST", () => {
   assert.equal(zonedToUtc("2026-07-01", 12 * 60, "America/Toronto").toISOString(), "2026-07-01T16:00:00.000Z");
   assert.equal(zonedToUtc("2026-12-01", 12 * 60, "America/Toronto").toISOString(), "2026-12-01T17:00:00.000Z");
+});
+
+test("texts go only to the owner, from Jarvis's number", async () => {
+  const sent: URLSearchParams[] = [];
+  setTwilioFetch((async (_u: unknown, init?: RequestInit) => {
+    sent.push(new URLSearchParams(String(init!.body)));
+    return new Response("{}", { status: 201 });
+  }) as typeof fetch);
+  const viaCall = await jarvis("text-me", { message: "CASARA 6:30, leave by 3:45" });
+  assert.equal(viaCall.json.ok, true);
+  const denied = await jarvis("text-me", { message: "hi" }, "+14165550199");
+  assert.match(denied.json.message, /ACCESS DENIED/);
+
+  const noSecret = await fetch(`${base}/api/jarvis/text-me`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: "x", to: "+14165550199" }) });
+  assert.equal(noSecret.status, 401);
+  const ok = await fetch(`${base}/api/jarvis/text-me`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-jarvis-secret": process.env.JARVIS_ADMIN_SECRET! },
+    body: JSON.stringify({ message: "Test from Jarvis", to: "+14165550199" }),
+  });
+  assert.equal(ok.status, 201);
+  assert.equal(sent.length, 2);
+  for (const p of sent) {
+    assert.equal(p.get("To"), "+1 (905) 555-0100");
+    assert.equal(p.get("From"), "+12895550123");
+  }
+  setTwilioFetch(null);
+});
+
+test("call-me needs the admin secret", async () => {
+  const res = await fetch(`${base}/api/jarvis/call-me`, { method: "POST", headers: { "content-type": "application/json", "x-jarvis-secret": "wrong" }, body: "{}" });
+  assert.equal(res.status, 401);
 });
