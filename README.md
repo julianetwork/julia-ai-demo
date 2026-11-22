@@ -374,10 +374,11 @@ You are Jarvis, the personal assistant of the person calling. Be brief, warm and
 - Dates: pass what they said ("tomorrow", "Friday", "2026-11-25"). Times like "3 PM".
 ```
 
-### Jarvis calls and texts you (Twilio)
+### Jarvis calls and texts you (Telnyx or Twilio)
 
-1. Buy a number in Twilio and import it into Retell (**Phone Numbers → Import → Twilio**). Set Jarvis as its inbound and outbound agent.
-2. Set `JARVIS_PHONE_NUMBER`, `JARVIS_ADMIN_SECRET`, `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` on the server.
+1. Buy a number in Telnyx or Twilio and import it into Retell (**Phone Numbers → Import**). Telnyx connects through a SIP trunk; follow Retell's Telnyx guide. Set Jarvis as its inbound and outbound agent.
+   * **Telnyx texting:** create a Messaging Profile, assign the number to it and enable SMS. In Canada and the US, also complete 10DLC registration for the number, or carriers may block the texts.
+2. Set `JARVIS_PHONE_NUMBER` and `JARVIS_ADMIN_SECRET` on the server, plus either `TELNYX_API_KEY` **or** `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
 3. Add a fifth Retell function, `text_me(message)`, as a POST to `/api/tools/jarvis/text-me`. Then "text me that address" works during a call.
 
 ```bash

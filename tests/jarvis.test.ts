@@ -179,6 +179,26 @@ test("texts go only to the owner, from Jarvis's number", async () => {
   setTwilioFetch(null);
 });
 
+test("uses Telnyx when TELNYX_API_KEY is set", async () => {
+  const { config } = await import("../server/config.ts");
+  const calls: { url: string; init: RequestInit }[] = [];
+  setTwilioFetch((async (u: unknown, init?: RequestInit) => {
+    calls.push({ url: String(u), init: init! });
+    return new Response("{}", { status: 200 });
+  }) as typeof fetch);
+  config.telnyxApiKey = "KEY_test";
+  try {
+    const r = await jarvis("text-me", { message: "Hello via Telnyx" });
+    assert.equal(r.json.ok, true);
+    assert.equal(calls[0].url, "https://api.telnyx.com/v2/messages");
+    const sent = JSON.parse(String(calls[0].init.body));
+    assert.deepEqual(sent, { from: "+12895550123", to: "+19055550100", text: "Hello via Telnyx" });
+  } finally {
+    config.telnyxApiKey = "";
+    setTwilioFetch(null);
+  }
+});
+
 test("call-me needs the admin secret", async () => {
   const res = await fetch(`${base}/api/jarvis/call-me`, { method: "POST", headers: { "content-type": "application/json", "x-jarvis-secret": "wrong" }, body: "{}" });
   assert.equal(res.status, 401);

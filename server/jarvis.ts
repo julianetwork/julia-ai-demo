@@ -219,30 +219,42 @@ export async function draftEmail(args: Args) {
 
 // ─────────────────────────── texts & calls ───────────────────────────
 
-let twilioFetch: typeof fetch = (...a) => fetch(...a);
-/** Tests swap in a fake Twilio. */
+let smsFetch: typeof fetch = (...a) => fetch(...a);
+/** Tests swap in a fake SMS provider. */
 export function setTwilioFetch(f: typeof fetch | null) {
-  twilioFetch = f ?? ((...a) => fetch(...a));
+  smsFetch = f ?? ((...a) => fetch(...a));
 }
 
-/** Sends an SMS from Jarvis's number to the owner's first number. Never to anyone else. */
+/**
+ * Sends an SMS from Jarvis's number to the owner's first number, never to
+ * anyone else. Uses Telnyx when TELNYX_API_KEY is set, otherwise Twilio.
+ */
 export async function textOwner(text: string): Promise<{ ok: boolean; message: string }> {
-  const { accountSid, authToken } = config.twilio;
   const to = config.jarvis.ownerNumbers[0];
-  if (!accountSid || !authToken || !config.jarvis.phoneNumber || !to) {
-    return { ok: false, message: "Texting isn't set up (Twilio keys, JARVIS_PHONE_NUMBER or JARVIS_OWNER_NUMBERS missing)." };
+  const from = config.jarvis.phoneNumber;
+  const { accountSid, authToken } = config.twilio;
+  const provider = config.telnyxApiKey ? "Telnyx" : accountSid && authToken ? "Twilio" : null;
+  if (!provider || !from || !to) {
+    return { ok: false, message: "Texting isn't set up (Telnyx or Twilio key, JARVIS_PHONE_NUMBER or JARVIS_OWNER_NUMBERS missing)." };
   }
   const body = text.trim().slice(0, 1000);
   if (!body) return { ok: false, message: "Nothing to text. Ask the owner what the text should say." };
-  const res = await twilioFetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
-    method: "POST",
-    headers: {
-      authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
-      "content-type": "application/x-www-form-urlencoded",
-    },
-    body: new URLSearchParams({ From: config.jarvis.phoneNumber, To: to, Body: body }),
-  });
-  if (!res.ok) return { ok: false, message: `The text didn't go through (Twilio ${res.status}).` };
+  const res =
+    provider === "Telnyx"
+      ? await smsFetch("https://api.telnyx.com/v2/messages", {
+          method: "POST",
+          headers: { authorization: `Bearer ${config.telnyxApiKey}`, "content-type": "application/json" },
+          body: JSON.stringify({ from, to: `+${to.replace(/[^\d]/g, "")}`, text: body }),
+        })
+      : await smsFetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
+          method: "POST",
+          headers: {
+            authorization: `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString("base64")}`,
+            "content-type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({ From: from, To: to, Body: body }),
+        });
+  if (!res.ok) return { ok: false, message: `The text didn't go through (${provider} ${res.status}).` };
   return { ok: true, message: "TEXT SENT to the owner's phone." };
 }
 

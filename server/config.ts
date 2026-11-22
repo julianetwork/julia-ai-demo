@@ -58,6 +58,8 @@ export const config = {
     /** Secret for POST /api/jarvis/call-me and /api/jarvis/text-me (header X-Jarvis-Secret). */
     adminSecret: (process.env.JARVIS_ADMIN_SECRET ?? "").trim(),
   },
+  /** Telnyx API key (alternative to Twilio for texts). If set, Telnyx is used. */
+  telnyxApiKey: (process.env.TELNYX_API_KEY ?? "").trim(),
   twilio: {
     accountSid: (process.env.TWILIO_ACCOUNT_SID ?? "").trim(),
     authToken: (process.env.TWILIO_AUTH_TOKEN ?? "").trim(),
