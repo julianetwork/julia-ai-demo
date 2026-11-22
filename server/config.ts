@@ -22,6 +22,13 @@ function parseTrustProxy(value: string | undefined): boolean | number | string {
   return v;
 }
 
+/** "+1 (905) 555-0100" or "9055550100" → "+19055550100" (what Retell, Telnyx and Twilio expect). */
+function toE164(value: string): string {
+  const d = value.replace(/[^\d]/g, "");
+  if (!d) return "";
+  return d.length === 10 ? `+1${d}` : `+${d}`;
+}
+
 const apiKey = (process.env.RETELL_API_KEY ?? "").trim();
 const placeholder = !apiKey || apiKey === "your_retell_secret_api_key_here";
 
@@ -50,7 +57,7 @@ export const config = {
   },
   jarvis: {
     /** Phone numbers allowed to use Jarvis, e.g. "+19055551234,+12895550000". Empty = Jarvis disabled. */
-    ownerNumbers: (process.env.JARVIS_OWNER_NUMBERS ?? "").split(",").map((n) => n.trim()).filter(Boolean),
+    ownerNumbers: (process.env.JARVIS_OWNER_NUMBERS ?? "").split(",").map(toE164).filter(Boolean),
     /** Optional: only accept Jarvis function calls from this Retell agent. */
     agentId: (process.env.JARVIS_AGENT_ID ?? "").trim(),
     /** Jarvis's own number (Twilio, imported into Retell) — used for outbound calls and texts. */

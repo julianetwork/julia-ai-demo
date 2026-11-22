@@ -173,7 +173,7 @@ test("texts go only to the owner, from Jarvis's number", async () => {
   assert.equal(ok.status, 201);
   assert.equal(sent.length, 2);
   for (const p of sent) {
-    assert.equal(p.get("To"), "+1 (905) 555-0100");
+    assert.equal(p.get("To"), "+19055550100");
     assert.equal(p.get("From"), "+12895550123");
   }
   setTwilioFetch(null);

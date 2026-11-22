@@ -122,7 +122,7 @@ test("text mode sends exactly one SMS, to the owner's first number only", async 
   const res = await briefing({ to: "+14165550199" });
   assert.equal(res.status, 201);
   assert.equal(sms.length, 1);
-  assert.equal(sms[0].get("To"), "+1 (905) 555-0100");
+  assert.equal(sms[0].get("To"), "+19055550100");
   assert.equal(sms[0].get("From"), "+12895550123");
   assert.match(sms[0].get("Body")!, /3:00 PM Flight lesson.*CASARA: Volunteer Acceptance/);
 });
@@ -159,7 +159,7 @@ test("call mode rings the owner with the briefing as a dynamic variable", async 
     const res = await briefing({ mode: "call", to: "+14165550199" });
     assert.equal(res.status, 201);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].to_number, "+1 (905) 555-0100");
+    assert.equal(calls[0].to_number, "+19055550100");
     assert.equal(calls[0].from_number, "+12895550123");
     assert.equal(calls[0].override_agent_id, "agent_jarvis_test");
     assert.equal(calls[0].retell_llm_dynamic_variables.call_reason, "daily briefing");

@@ -253,7 +253,7 @@ export async function textOwner(text: string): Promise<{ ok: boolean; message: s
       ? await smsFetch("https://api.telnyx.com/v2/messages", {
           method: "POST",
           headers: { authorization: `Bearer ${config.telnyxApiKey}`, "content-type": "application/json" },
-          body: JSON.stringify({ from, to: `+${to.replace(/[^\d]/g, "")}`, text: body }),
+          body: JSON.stringify({ from, to, text: body }),
         })
       : await smsFetch(`https://api.twilio.com/2010-04-01/Accounts/${encodeURIComponent(accountSid)}/Messages.json`, {
           method: "POST",
