@@ -42,6 +42,18 @@ export const config = {
   businessHours: parseBusinessHours(process.env.BUSINESS_HOURS) ?? DEFAULT_HOURS,
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   timeZone: process.env.DEMO_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
+  /** Owner's Google account for Jarvis (Calendar + Gmail). See `npm run google:auth`. */
+  google: {
+    clientId: (process.env.GOOGLE_CLIENT_ID ?? "").trim(),
+    clientSecret: (process.env.GOOGLE_CLIENT_SECRET ?? "").trim(),
+    refreshToken: (process.env.GOOGLE_REFRESH_TOKEN ?? "").trim(),
+  },
+  jarvis: {
+    /** Phone numbers allowed to use Jarvis, e.g. "+19055551234,+12895550000". Empty = Jarvis disabled. */
+    ownerNumbers: (process.env.JARVIS_OWNER_NUMBERS ?? "").split(",").map((n) => n.trim()).filter(Boolean),
+    /** Optional: only accept Jarvis function calls from this Retell agent. */
+    agentId: (process.env.JARVIS_AGENT_ID ?? "").trim(),
+  },
 };
 
 export const isRetellConfigured = () => config.retellApiKey !== "";

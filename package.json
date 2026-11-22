@@ -15,7 +15,8 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "check:secrets": "node scripts/check-bundle-secrets.mjs"
+    "check:secrets": "node scripts/check-bundle-secrets.mjs",
+    "google:auth": "node scripts/google-auth.mjs"
   },
   "dependencies": {
     "dotenv": "^18.0.7",

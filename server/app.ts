@@ -8,6 +8,7 @@ import { callsRouter } from "./routes/calls.ts";
 import { demoSessionsRouter } from "./routes/demoSessions.ts";
 import { toolsRouter } from "./routes/tools.ts";
 import { log } from "./logger.ts";
+import { isGoogleConfigured } from "./google.ts";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -54,6 +55,8 @@ app.get("/api/health", (req, res) => {
     retellConfigured: isRetellConfigured(),
     agentConfigured: Boolean(config.retellAgentId),
     toolSecretConfigured: Boolean(config.toolSecret),
+    jarvisGoogleConnected: isGoogleConfigured(),
+    jarvisOwnerConfigured: config.jarvis.ownerNumbers.length > 0,
     // Counts only (no addresses): use proxyHops as the value for TRUST_PROXY when hosted.
     proxyHops: Number.isFinite(minHops) ? minHops : countHops(req.get("x-forwarded-for")),
     trustProxy: String(config.trustProxy),
