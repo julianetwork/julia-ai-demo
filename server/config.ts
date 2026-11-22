@@ -22,6 +22,13 @@ function parseTrustProxy(value: string | undefined): boolean | number | string {
   return v;
 }
 
+/** "+1 (905) 555-0100" or "9055550100" → "+19055550100" (what Retell, Telnyx and Twilio expect). */
+function toE164(value: string): string {
+  const d = value.replace(/[^\d]/g, "");
+  if (!d) return "";
+  return d.length === 10 ? `+1${d}` : `+${d}`;
+}
+
 const apiKey = (process.env.RETELL_API_KEY ?? "").trim();
 const placeholder = !apiKey || apiKey === "your_retell_secret_api_key_here";
 
@@ -42,6 +49,28 @@ export const config = {
   businessHours: parseBusinessHours(process.env.BUSINESS_HOURS) ?? DEFAULT_HOURS,
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   timeZone: process.env.DEMO_TIMEZONE?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone,
+  /** Owner's Google account for Jarvis (Calendar + Gmail). See `npm run google:auth`. */
+  google: {
+    clientId: (process.env.GOOGLE_CLIENT_ID ?? "").trim(),
+    clientSecret: (process.env.GOOGLE_CLIENT_SECRET ?? "").trim(),
+    refreshToken: (process.env.GOOGLE_REFRESH_TOKEN ?? "").trim(),
+  },
+  jarvis: {
+    /** Phone numbers allowed to use Jarvis, e.g. "+19055551234,+12895550000". Empty = Jarvis disabled. */
+    ownerNumbers: (process.env.JARVIS_OWNER_NUMBERS ?? "").split(",").map(toE164).filter(Boolean),
+    /** Optional: only accept Jarvis function calls from this Retell agent. */
+    agentId: (process.env.JARVIS_AGENT_ID ?? "").trim(),
+    /** Jarvis's own number (Twilio, imported into Retell) — used for outbound calls and texts. */
+    phoneNumber: (process.env.JARVIS_PHONE_NUMBER ?? "").trim(),
+    /** Secret for POST /api/jarvis/call-me, /text-me and /briefing (header X-Jarvis-Secret). */
+    adminSecret: (process.env.JARVIS_ADMIN_SECRET ?? "").trim(),
+  },
+  /** Telnyx API key (alternative to Twilio for texts). If set, Telnyx is used. */
+  telnyxApiKey: (process.env.TELNYX_API_KEY ?? "").trim(),
+  twilio: {
+    accountSid: (process.env.TWILIO_ACCOUNT_SID ?? "").trim(),
+    authToken: (process.env.TWILIO_AUTH_TOKEN ?? "").trim(),
+  },
 };
 
 export const isRetellConfigured = () => config.retellApiKey !== "";

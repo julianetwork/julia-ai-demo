@@ -6,6 +6,8 @@ import { sessionIdForCall, CALL_ID_PATTERN } from "../callRegistry.ts";
 import { getSession, ephemeralSessionForCall, type DemoSession } from "../demoSessions.ts";
 import { checkSlot, bookSlot } from "../scheduler.ts";
 import { log, shortId } from "../logger.ts";
+import { isOwnerCall, REFUSED, getSchedule, createEvent, inboxSummary, draftEmail, textMe, type JarvisCall } from "../jarvis.ts";
+import { GoogleError } from "../google.ts";
 
 /**
  * Endpoints for Julia's Retell custom functions (check_availability,
@@ -105,8 +107,48 @@ toolsRouter.post("/book-appointment", authenticate, (req, res) => {
   res.json(result);
 });
 
+// ───────────── Jarvis (personal assistant on the owner's phone line) ─────────────
+
+const jarvisTools: Record<string, (a: Record<string, unknown>) => Promise<{ message: string }>> = {
+  "get-schedule": getSchedule,
+  "create-event": createEvent,
+  "inbox-summary": inboxSummary,
+  "draft-email": draftEmail,
+  "text-me": textMe,
+};
+
+toolsRouter.post("/jarvis/:fn", authenticate, async (req, res) => {
+  const fn = jarvisTools[req.params.fn as string];
+  if (!fn) {
+    res.status(404).json({ error: "Unknown Jarvis function" });
+    return;
+  }
+  const call = ((req.body ?? {}) as { call?: JarvisCall }).call;
+  const owner = isOwnerCall(call);
+  if (!owner.ok) {
+    log.warn("jarvis", `refused ${req.params.fn}: ${owner.reason}`);
+    res.json(REFUSED);
+    return;
+  }
+  try {
+    const result = await fn(args(req));
+    log.info("jarvis", `${req.params.fn} → ok`);
+    res.json(result);
+  } catch (err) {
+    const status = err instanceof GoogleError ? err.status : 0;
+    log.error("jarvis", `${req.params.fn} failed: ${err instanceof Error ? err.message : String(err)}`);
+    // 200 with a message, so the agent explains the problem instead of going silent.
+    res.json({
+      ok: false,
+      message: status === 503
+        ? "Google isn't connected on the server yet. Tell the owner to finish the Google setup."
+        : "The Google request failed. Apologise and suggest trying again in a minute.",
+    });
+  }
+});
+
 // A function URL that doesn't match either endpoint: log it so a typo in Retell is visible.
 toolsRouter.use((req, res) => {
-  log.warn("tools", `no such function endpoint: ${req.method} /api/tools${req.path} — expected POST /api/tools/check-availability or /api/tools/book-appointment`);
+  log.warn("tools", `no such function endpoint: ${req.method} /api/tools${req.path} — expected POST /api/tools/check-availability, /api/tools/book-appointment or /api/tools/jarvis/<function>`);
   res.status(404).json({ error: "Unknown function endpoint" });
 });

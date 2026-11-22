@@ -325,3 +325,93 @@ Verified locally (in a sandbox without access to Retell's servers):
 * **Secret handling:** with a dummy key, the built bundle, served assets, API responses and logs contain no trace of it.
 
 **Still needs a real test with your Retell agent:** a voice call where Julia actually calls `check_availability` and `book_appointment`. This needs the function setup above and a publish. Try: book 8 PM, then start a new call and ask for 8:30 PM. Julia should offer 9:00 PM.
+
+---
+
+## Jarvis — personal assistant on your phone
+
+Jarvis is a second Retell agent that shares this server with Julia. You call its phone number, and it reads and manages **your** Google Calendar and Gmail by voice. Julia's barbershop demo is unchanged.
+
+| Function | URL | What it does |
+| --- | --- | --- |
+| `get_schedule(date?)` | `/api/tools/jarvis/get-schedule` | Lists your events for a day (default today) |
+| `create_event(title, date, time, duration_minutes?, location?, force?)` | `/api/tools/jarvis/create-event` | Adds an event. It refuses an overlap unless `force` is true |
+| `get_inbox_summary()` | `/api/tools/jarvis/inbox-summary` | Unread primary-inbox email from the last 3 days |
+| `draft_email(to, subject, body)` | `/api/tools/jarvis/draft-email` | Saves a Gmail **draft**. Jarvis never sends email |
+
+### Security
+
+* **Owner only.** Every function checks the caller's number against `JARVIS_OWNER_NUMBERS`. Any other caller, a hidden caller ID or a web call is refused before Google is touched. Set `JARVIS_AGENT_ID` as well, so only the Jarvis agent can use these functions.
+* Requests are authenticated the same way as Julia's: a Retell signature or the `X-Julia-Tool-Secret` header.
+* Caller ID can be spoofed. Jarvis can read your calendar and email subjects, add events and save drafts. It cannot send, delete or forward anything.
+* Google access is limited to `calendar.events`, `gmail.readonly` and `gmail.compose`. You can revoke it any time at https://myaccount.google.com/permissions.
+
+### Setup
+
+1. **Google:** in Google Cloud Console, create a project and enable the **Google Calendar API** and the **Gmail API**.
+   * Set up the OAuth consent screen with type External and add yourself as a test user.
+   * Create an OAuth client ID of type **Desktop app**.
+   * Put the client ID and secret in `.env`, then run `npm run google:auth` **on your own computer**.
+   * Sign in, then copy the printed `GOOGLE_REFRESH_TOKEN` into `.env` and into Render.
+   * While the consent screen is in "Testing", Google expires the token after 7 days. Publish the app (it stays unverified, which is fine for personal use) to keep it.
+2. **Server env:** set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, `JARVIS_OWNER_NUMBERS` (your mobile, e.g. `+19055551234`), `DEMO_TIMEZONE=America/Toronto` and `JARVIS_AGENT_ID`. `/api/health` should show `jarvisGoogleConnected: true` and `jarvisOwnerConfigured: true`.
+3. **Retell:** create a new agent named "Jarvis" and add the four custom functions above as POST requests to `https://YOUR-APP.onrender.com/api/tools/jarvis/...`, with the `X-Julia-Tool-Secret` header. Parameters (all strings unless noted):
+   * `get_schedule`: `date`
+   * `create_event`: `title`, `date`, `time` (required), `duration_minutes` (number), `location`, `force` (boolean)
+   * `get_inbox_summary`: none
+   * `draft_email`: `to`, `subject`, `body` (required)
+4. **Phone number:** buy a number in Retell (**Phone Numbers → Buy**), or import one through Twilio. Set its inbound agent to Jarvis.
+
+### Jarvis prompt (paste into the agent)
+
+```
+You are Jarvis, the personal assistant of the person calling. Be brief, warm and a little witty. This is a phone call, so keep answers short.
+
+- For anything about their schedule, call get_schedule. For email, call get_inbox_summary. Never invent events or emails.
+- Every function reply has a "message". Follow it exactly. If it says ACCESS DENIED, share nothing and end politely.
+- Before create_event, repeat the title, day, time and length back and get a yes. If the reply says NOT CREATED because of a conflict, explain it and only retry with force=true if they confirm.
+- Before draft_email, spell the email address back letter by letter and read a one-line summary of the body. Say clearly that it is saved as a draft in Gmail and was NOT sent.
+- Dates: pass what they said ("tomorrow", "Friday", "2026-11-25"). Times like "3 PM".
+```
+
+### Jarvis calls and texts you (Telnyx or Twilio)
+
+1. Buy a number in Telnyx or Twilio and import it into Retell (**Phone Numbers → Import**). Telnyx connects through a SIP trunk; follow Retell's Telnyx guide. Set Jarvis as its inbound and outbound agent.
+   * **Telnyx texting:** create a Messaging Profile, assign the number to it and enable SMS. In Canada and the US, also complete 10DLC registration for the number, or carriers may block the texts.
+2. Set `JARVIS_PHONE_NUMBER` and `JARVIS_ADMIN_SECRET` on the server, plus either `TELNYX_API_KEY` **or** `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN`.
+3. Add a fifth Retell function, `text_me(message)`, as a POST to `/api/tools/jarvis/text-me`. Then "text me that address" works during a call.
+
+```bash
+# Ring your phone now:
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/call-me \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"reason":"test call"}'
+
+# Text yourself:
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/text-me \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"message":"Jarvis online."}'
+```
+
+Both only reach the **first** number in `JARVIS_OWNER_NUMBERS`. A `to` field is ignored, so a leaked secret can't make Jarvis call or text strangers. In the Jarvis prompt, `{{call_reason}}` holds the reason for an outbound call.
+
+### Daily briefing
+
+`POST /api/jarvis/briefing` builds a short plain-text summary of today's calendar (first) and unread primary-inbox mail, capped at 600 characters with "+N more" when the list is long:
+
+```
+Good morning. Sunday, November 22: 3:00 PM Flight lesson; 6:30 PM CASARA. Unread (2): CASARA: Volunteer Acceptance; Transport Canada: ROC-A exam.
+```
+
+```bash
+# Text the briefing (default):
+curl -X POST https://YOUR-APP.onrender.com/api/jarvis/briefing \
+  -H "X-Jarvis-Secret: $JARVIS_ADMIN_SECRET" -H "content-type: application/json" \
+  -d '{"mode":"text"}'
+
+# Or have Jarvis call and read it:  -d '{"mode":"call"}'
+```
+
+It uses the same `X-Jarvis-Secret` and only reaches the first number in `JARVIS_OWNER_NUMBERS`. Without Google connected it returns 503. For `call`, the agent gets `{{call_reason}}` = "daily briefing" and `{{briefing}}` with the text; add a line to the Jarvis prompt such as "If {{briefing}} is set, read it first, then ask what they need."
+
+Run it from any scheduler, for example a Render Cron Job or a scheduled task that runs the curl above at 7:30 AM Toronto time. Cron schedules are usually in UTC, so 7:30 AM Toronto is `30 12 * * *` in winter (EST) and `30 11 * * *` in summer (EDT), or use a scheduler that accepts a time zone.
